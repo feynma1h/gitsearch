@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "Labelled queries for the search eval harness.",
+    "",
+    "Each entry is a query and a list of repo full_names that *should*",
+    "appear in the top results. Treat this as a regression set — the",
+    "queries should cover obvious cases, common failure modes, and",
+    "anything you've fixed in the past.",
+    "",
+    "Format:",
+    "  - query: the user-facing search string.",
+    "  - relevant: full_name strings that should appear in top-K.",
+    "    Order doesn't matter; relevance is binary.",
+    "  - notes: optional, why this query is interesting.",
+    "",
+    "Start with ~30 queries spanning languages, domains, and shapes",
+    "(specific repo names, conceptual queries, multi-word phrases).",
+    "Below are 5 seeds to demonstrate the format — replace and grow."
+  ],
+  "queries": [
+    {
+      "query": "fast http server in rust",
+      "relevant": [
+        "tokio-rs/axum",
+        "actix/actix-web",
+        "hyperium/hyper",
+        "rocket-rs/rocket"
+      ],
+      "notes": "Multi-signal: language constraint + domain. Tests whether semantic + filters cooperate."
+    },
+    {
+      "query": "kubernetes package manager",
+      "relevant": ["helm/helm"],
+      "notes": "Should rank Helm at #1. If a generic Kubernetes repo wins, hybrid weights are off."
+    },
+    {
+      "query": "machine learning framework python",
+      "relevant": [
+        "pytorch/pytorch",
+        "tensorflow/tensorflow",
+        "scikit-learn/scikit-learn",
+        "keras-team/keras"
+      ],
+      "notes": "Megastar territory; tests that stars don't dominate similarity."
+    },
+    {
+      "query": "vector database for embeddings",
+      "relevant": [
+        "qdrant/qdrant",
+        "milvus-io/milvus",
+        "weaviate/weaviate",
+        "chroma-core/chroma",
+        "pgvector/pgvector"
+      ],
+      "notes": "Semantic-only — exact word 'vector' is in many unrelated repos."
+    },
+    {
+      "query": "static site generator",
+      "relevant": [
+        "gohugoio/hugo",
+        "jekyll/jekyll",
+        "11ty/eleventy",
+        "getzola/zola",
+        "gatsbyjs/gatsby"
+      ],
+      "notes": "Common phrase, no language filter; tests cross-language relevance."
+    }
+  ]
+}

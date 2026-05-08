@@ -1,0 +1,89 @@
+# Docker Compose for local development.
+#
+# Runs three long-lived services:
+#   - postgres            — Postgres 16 with pgvector preinstalled
+#   - embedding-service   — FastAPI + sentence-transformers (CPU)
+#   - search-service      — FastAPI + asyncpg, talks to the above two
+#
+# The crawler and the indexer pipeline are *not* services — they're
+# batch jobs you run from the host (or in CI, or as one-off containers).
+# Their schemas / behaviour is documented in their own READMEs.
+#
+# Quickstart:
+#
+#   cp .env.example .env       # then fill in GITHUB_TOKEN
+#   docker compose up -d postgres
+#   make migrate               # applies sql/0001..0003
+#   docker compose up -d embedding-service search-service
+#   make crawl                 # populate repositories
+#   make index                 # populate repository_embeddings
+#   make build-hnsw            # build the HNSW index after bulk insert
+#   curl localhost:8002/search -d '{"query": "fast http server"}'  # done
+#
+# See README.md for the long version.
+
+services:
+  postgres:
+    # pgvector image bundles Postgres 16 + the vector extension.
+    # Pinned tag so a `docker compose pull` doesn't silently upgrade.
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-gitsearch}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  embedding-service:
+    build:
+      context: ./indexer/service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      EMBEDDING_MODEL: BAAI/bge-small-en-v1.5
+      MAX_BATCH_SIZE: "128"
+    ports:
+      - "${EMBEDDING_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # First startup is slow (~30s for model download/load).
+      start_period: 60s
+
+  search-service:
+    build:
+      context: ./search/service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Reach Postgres and embedding via the compose network. The
+      # search service runs on a separate VM in production; these
+      # vars get overridden there.
+      DATABASE_URL: ${DATABASE_URL}
+      EMBEDDING_SERVICE_URL: http://embedding-service:8001
+    ports:
+      - "${SEARCH_PORT:-8002}:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embedding-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:

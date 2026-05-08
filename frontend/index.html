@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitsearch</title>
+<style>
+  /* Design notes:
+     - Single-column, centered, max-width 720px. Search results read better
+       narrow than wide.
+     - System font stack so it looks native everywhere.
+     - Restrained palette: one accent color (#0969da, GitHub blue), one
+       muted gray for chrome. No gradients, no shadows.
+     - Mobile-first; the same layout works on phones unchanged. */
+
+  :root {
+    --fg: #1f2328;
+    --fg-muted: #59636e;
+    --bg: #ffffff;
+    --bg-subtle: #f6f8fa;
+    --border: #d1d9e0;
+    --accent: #0969da;
+    --accent-hover: #0550ae;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e6edf3;
+      --fg-muted: #9198a1;
+      --bg: #0d1117;
+      --bg-subtle: #151b23;
+      --border: #3d444d;
+      --accent: #4493f8;
+      --accent-hover: #6ca4f8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  .container { max-width: 720px; margin: 0 auto; padding: 32px 16px 96px; }
+  h1 {
+    font-size: 28px; font-weight: 600; margin: 0 0 4px;
+    letter-spacing: -0.02em;
+  }
+  .tagline { color: var(--fg-muted); margin: 0 0 24px; }
+  .search-form { margin-bottom: 16px; }
+  .search-row { display: flex; gap: 8px; }
+  .search-input {
+    flex: 1;
+    padding: 10px 14px;
+    font-size: 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: inherit;
+  }
+  .search-input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    border-color: var(--accent);
+  }
+  .search-button {
+    padding: 10px 18px;
+    font-size: 15px;
+    font-weight: 500;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .search-button:hover { background: var(--accent-hover); }
+  .search-button:disabled { opacity: 0.6; cursor: wait; }
+
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    margin-top: 12px; font-size: 14px; color: var(--fg-muted);
+  }
+  .filters label { display: flex; align-items: center; gap: 6px; }
+  .filters input[type="text"], .filters input[type="number"] {
+    padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg); color: var(--fg); font-family: inherit;
+    font-size: 14px;
+  }
+  .filters input[type="text"] { width: 110px; }
+  .filters input[type="number"] { width: 90px; }
+
+  details.advanced {
+    margin-top: 12px; font-size: 14px; color: var(--fg-muted);
+  }
+  details.advanced summary { cursor: pointer; user-select: none; }
+  .weights {
+    display: grid; grid-template-columns: 100px 1fr 50px;
+    gap: 6px 12px; margin-top: 12px; align-items: center;
+  }
+  .weights input[type="range"] { width: 100%; }
+  .weights output { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .examples {
+    margin-top: 24px; padding: 16px; background: var(--bg-subtle);
+    border-radius: 6px; font-size: 14px;
+  }
+  .examples-title { color: var(--fg-muted); margin-bottom: 8px; }
+  .examples-list {
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .example-chip {
+    padding: 4px 10px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 999px; font-size: 13px; color: var(--accent);
+    cursor: pointer; font-family: inherit;
+  }
+  .example-chip:hover { background: var(--accent); color: white; border-color: var(--accent); }
+
+  .status {
+    margin-top: 24px; color: var(--fg-muted); font-size: 14px;
+  }
+  .status.error { color: #cf222e; }
+
+  .results { margin-top: 24px; list-style: none; padding: 0; }
+  .result {
+    padding: 16px 0; border-top: 1px solid var(--border);
+  }
+  .result:first-child { border-top: none; padding-top: 0; }
+  .result-name {
+    font-size: 16px; font-weight: 600; color: var(--accent);
+    text-decoration: none;
+  }
+  .result-name:hover { text-decoration: underline; }
+  .result-desc { margin: 4px 0 0; color: var(--fg); }
+  .result-meta {
+    margin-top: 6px; font-size: 13px; color: var(--fg-muted);
+    display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+  }
+  .topics { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .topic {
+    font-size: 12px; padding: 2px 8px; background: var(--bg-subtle);
+    border-radius: 999px; color: var(--fg-muted);
+  }
+  .scores {
+    font-variant-numeric: tabular-nums; font-size: 12px;
+    color: var(--fg-muted);
+  }
+  .scores .key { opacity: 0.7; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>gitsearch</h1>
+  <p class="tagline">Semantic search over GitHub repositories.</p>
+
+  <form class="search-form" id="search-form">
+    <div class="search-row">
+      <input class="search-input" id="q" type="text" placeholder="What are you looking for?" autocomplete="off" autofocus>
+      <button class="search-button" id="submit" type="submit">Search</button>
+    </div>
+
+    <div class="filters">
+      <label>Language <input type="text" id="language" placeholder="any"></label>
+      <label>Min stars <input type="number" id="min-stars" min="0" placeholder="0"></label>
+      <label><input type="checkbox" id="exclude-archived" checked> Hide archived</label>
+    </div>
+
+    <details class="advanced">
+      <summary>Tune scoring</summary>
+      <div class="weights">
+        <span>Similarity</span>
+        <input type="range" id="w-similarity" min="0" max="2" step="0.1" value="1.0">
+        <output for="w-similarity">1.0</output>
+
+        <span>Stars</span>
+        <input type="range" id="w-stars" min="0" max="2" step="0.1" value="0.3">
+        <output for="w-stars">0.3</output>
+
+        <span>Recency</span>
+        <input type="range" id="w-recency" min="0" max="2" step="0.1" value="0.2">
+        <output for="w-recency">0.2</output>
+      </div>
+    </details>
+  </form>
+
+  <div class="examples" id="examples">
+    <div class="examples-title">Try one of these:</div>
+    <div class="examples-list">
+      <button class="example-chip" type="button">fast http server in rust</button>
+      <button class="example-chip" type="button">kubernetes package manager</button>
+      <button class="example-chip" type="button">vector database for embeddings</button>
+      <button class="example-chip" type="button">static site generator</button>
+      <button class="example-chip" type="button">javascript testing framework</button>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+  <ol class="results" id="results"></ol>
+</div>
+
+<script>
+  /* The whole client. ~80 lines of vanilla JS.
+   *
+   * Configuration:
+   *   - SEARCH_URL: where the search service lives. For local dev,
+   *     localhost:8002 is fine. For production, set this to your
+   *     deployed search service URL.
+   */
+  const SEARCH_URL = (window.GITSEARCH_API_URL || "http://localhost:8002") + "/search";
+
+  const $ = id => document.getElementById(id);
+  const form = $("search-form");
+  const status = $("status");
+  const results = $("results");
+  const examples = $("examples");
+
+  // Weight slider live values.
+  for (const k of ["similarity", "stars", "recency"]) {
+    const slider = $(`w-${k}`);
+    const output = slider.nextElementSibling;
+    slider.addEventListener("input", () => { output.value = slider.value; });
+  }
+
+  // Example chips.
+  examples.querySelectorAll(".example-chip").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $("q").value = btn.textContent;
+      form.requestSubmit();
+    });
+  });
+
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const query = $("q").value.trim();
+    if (!query) return;
+
+    const filters = {};
+    if ($("language").value.trim()) filters.language = $("language").value.trim();
+    if ($("min-stars").value) filters.min_stars = parseInt($("min-stars").value, 10);
+    filters.exclude_archived = $("exclude-archived").checked;
+
+    const weights = {
+      similarity: parseFloat($("w-similarity").value),
+      stars: parseFloat($("w-stars").value),
+      recency: parseFloat($("w-recency").value),
+    };
+
+    examples.style.display = "none";
+    status.className = "status";
+    status.textContent = "Searching...";
+    results.innerHTML = "";
+    $("submit").disabled = true;
+
+    try {
+      const resp = await fetch(SEARCH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, limit: 20, filters, weights }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+      const data = await resp.json();
+      render(data);
+    } catch (err) {
+      status.className = "status error";
+      status.textContent = `Error: ${err.message}`;
+    } finally {
+      $("submit").disabled = false;
+    }
+  });
+
+  function render(data) {
+    const { hits, took_ms, model } = data;
+    status.textContent = `${hits.length} result${hits.length === 1 ? "" : "s"} in ${took_ms} ms · model: ${model}`;
+    results.innerHTML = "";
+    for (const hit of hits) {
+      const li = document.createElement("li");
+      li.className = "result";
+      const meta = [
+        hit.primary_language ? `<span>${esc(hit.primary_language)}</span>` : "",
+        `<span>★ ${fmtStars(hit.stars)}</span>`,
+        hit.pushed_at ? `<span>updated ${fmtDate(hit.pushed_at)}</span>` : "",
+        `<span class="scores"><span class="key">sim</span> ${hit.similarity.toFixed(3)} · <span class="key">score</span> ${hit.hybrid_score.toFixed(3)}</span>`,
+      ].filter(Boolean).join("");
+      const topics = (hit.topics || []).slice(0, 5)
+        .map(t => `<span class="topic">${esc(t)}</span>`).join("");
+      li.innerHTML = `
+        <a class="result-name" href="${esc(hit.url)}" target="_blank" rel="noopener">${esc(hit.full_name)}</a>
+        ${hit.description ? `<p class="result-desc">${esc(hit.description)}</p>` : ""}
+        <div class="result-meta">${meta}</div>
+        ${topics ? `<div class="topics">${topics}</div>` : ""}
+      `;
+      results.appendChild(li);
+    }
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+  }
+  function fmtStars(n) {
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    return n;
+  }
+  function fmtDate(iso) {
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    if (days < 1) return "today";
+    if (days < 30) return `${days}d ago`;
+    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+    return `${Math.floor(days / 365)}y ago`;
+  }
+</script>
+</body>
+</html>

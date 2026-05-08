@@ -1,0 +1,52 @@
+# ─── Environments and secrets ────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+.envrc
+
+# ─── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test and lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ─── Logs and runtime output ─────────────────────────────────────────────
+*.log
+logs/
+
+# Local eval runs (the harness suggests writing to runs/)
+search/eval/runs/
+
+# ─── Editors ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS metadata ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Defensive: postgres data dir if it ever lands here ──────────────────
+postgres_data/
+
+# ─── Fly.io local state ──────────────────────────────────────────────────
+.fly/
