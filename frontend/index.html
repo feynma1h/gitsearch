@@ -349,7 +349,7 @@
    *   - SEARCH_URL: the deployed search service. The localhost fallback
    *     supports running the file from `python -m http.server` during dev.
    */
-  const SEARCH_URL = (window.GITSEARCH_API_URL || "http://localhost:8002") + "/search";
+  const SEARCH_URL = (window.GITSEARCH_API_URL || "https://gitsearch-search-148185858207.asia-southeast1.run.app") + "/search";
 
   const $ = id => document.getElementById(id);
   const form = $("search-form");
