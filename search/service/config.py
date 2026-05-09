@@ -58,14 +58,16 @@ HNSW_EF_SEARCH: int = 100
 
 DEFAULT_EMBEDDING_SERVICE_URL: str = "http://localhost:8001"
 
-# Search is latency-sensitive in a way the indexer pipeline isn't.
-# We give the embedding service a tighter budget here.
-EMBEDDING_TIMEOUT_SECONDS: float = 5.0
+# Search is latency-sensitive in a way the indexer pipeline isn't, but
+# the embedding service is also scale-to-zero in production — the first
+# request after a few minutes of idle pays a ~10-15s cold start to load
+# the model. We accept that latency on the cold path; warm requests
+# still complete in ~25-40ms.
+EMBEDDING_TIMEOUT_SECONDS: float = 30.0
 
-# Retries for transient errors (5xx, network blips). Keep low — under
-# search latency we'd rather fail fast than burn the user's budget on
-# retries.
-EMBEDDING_MAX_RETRIES: int = 2
+# One retry is enough — if the cold start hasn't completed in 30s,
+# something else is wrong and waiting longer won't help.
+EMBEDDING_MAX_RETRIES: int = 1
 EMBEDDING_RETRY_BACKOFF_SECONDS: float = 0.2
 
 
