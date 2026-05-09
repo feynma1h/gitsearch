@@ -1,11 +1,18 @@
-"""Worker coroutine: drains shards from the queue and persists results."""
+"""Worker coroutine: drains shards from the queue and persists results.
+
+Per-shard outcomes are recorded into a shared ``CrawlStats`` object so
+that ``main`` can print a single-line summary at the end of the run —
+the difference between "looks fine" and "76 of 85 shards aborted" is
+otherwise invisible without grepping logs.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 import aiohttp
 import asyncpg
@@ -17,6 +24,28 @@ from .rate_limiter import RateLimiter, parse_graphql_rate_limit
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class CrawlStats:
+    """Per-run summary, populated by workers as they finish shards.
+
+    Owned by main(); workers append outcomes via the helper methods.
+    A simple dataclass rather than a thread-safe counter because all
+    mutations happen from the asyncio loop — no concurrent writes."""
+    shards_total: int = 0
+    shards_completed: int = 0
+    shards_aborted: int = 0
+    repos_inserted: int = 0
+    aborted_shard_names: List[str] = field(default_factory=list)
+
+    def record_completed(self, repos: int) -> None:
+        self.shards_completed += 1
+        self.repos_inserted += repos
+
+    def record_aborted(self, shard: str) -> None:
+        self.shards_aborted += 1
+        self.aborted_shard_names.append(shard)
+
+
 async def worker(
     worker_id: int,
     queue: asyncio.Queue,
@@ -24,6 +53,7 @@ async def worker(
     session: aiohttp.ClientSession,
     token: str,
     pool: asyncpg.Pool,
+    stats: CrawlStats,
     deadline: Optional[float] = None,
 ) -> None:
     """Pull shards from ``queue`` until empty (or ``deadline`` is reached).
@@ -35,6 +65,7 @@ async def worker(
         session: Shared aiohttp session for connection reuse.
         token: GitHub personal access token.
         pool: asyncpg connection pool.
+        stats: Shared accumulator for the end-of-run summary.
         deadline: Optional ``time.monotonic()`` value past which the worker
             stops accepting new shards. Useful to bound total runtime.
     """
@@ -45,11 +76,13 @@ async def worker(
             return
 
         try:
-            await _process_shard(
+            repos = await _process_shard(
                 worker_id, shard, limiter, session, token, pool, deadline,
             )
+            stats.record_completed(repos)
         except GitHubAPIError as exc:
             logger.error("[w%d] Aborting shard %r: %s", worker_id, shard, exc)
+            stats.record_aborted(shard)
         finally:
             queue.task_done()
 
@@ -66,7 +99,8 @@ async def _process_shard(
     token: str,
     pool: asyncpg.Pool,
     deadline: Optional[float],
-) -> None:
+) -> int:
+    """Fetch all pages for one shard. Returns the number of repos inserted."""
     cursor: Optional[str] = None
     total = 0
     logger.info("[w%d] Starting shard %s", worker_id, shard)
@@ -77,10 +111,14 @@ async def _process_shard(
                 "[w%d] Deadline hit mid-shard %s (fetched %d so far)",
                 worker_id, shard, total,
             )
-            return
+            return total
 
         await limiter.wait_if_needed()
-        data = await fetch_repos(session, token, shard, cursor)
+        # Pass the limiter so secondary-rate-limit detection in the
+        # GitHub client can trigger a global pause across all workers.
+        # Without this, a 403 throttles only the worker that hit it
+        # while siblings keep firing requests, prolonging the throttle.
+        data = await fetch_repos(session, token, shard, cursor, limiter=limiter)
 
         search = data["search"]
         repos = search["nodes"]
@@ -103,3 +141,4 @@ async def _process_shard(
         "[w%d] Finished shard %s: %d repos (reported total: %d)",
         worker_id, shard, total, search["repositoryCount"],
     )
+    return total

@@ -18,17 +18,17 @@ from __future__ import annotations
 from typing import List
 
 
-def generate_shards(min_stars: int = 50, max_stars: int = 500_000) -> List[str]:
+def generate_shards(min_stars: int = 200, max_stars: int = 500_000) -> List[str]:
     """Return a list of GitHub search query fragments covering the star range.
 
     Args:
-        min_stars: Lower bound (inclusive). Defaults to 50 to keep the crawl
-            tractable; below ~50 stars there are too many repos to fit in
+        min_stars: Lower bound (inclusive). Defaults to 200 to keep the crawl
+            tractable; below ~200 stars there are too many repos to fit in
             GitHub's 1000-results-per-query cap even with single-star shards.
         max_stars: Upper bound used only to bound the open-ended top shard.
 
     Returns:
-        A list of query fragments like ``["stars:50..59", "stars:60..69", ...]``
+        A list of query fragments like ``["stars:200..200", "stars:201..201", ...]``
         with no overlapping boundaries.
     """
     if min_stars < 0:
@@ -39,9 +39,11 @@ def generate_shards(min_stars: int = 50, max_stars: int = 500_000) -> List[str]:
     # (range_start, range_end_exclusive, width). The crawler will emit shards
     # of `width` stars covering [range_start, range_end_exclusive).
     bands = [
-        (50,      500,     10),
-        (500,     2_000,   50),
-        (2_000,   10_000,  500),
+        (200,     400,     1),
+        (400,     1_000,   2),
+        (1_000,   2_000,   50),
+        (2_000,   5_000,   100),
+        (5_000,   10_000,  500),
         (10_000,  50_000,  5_000),
     ]
 

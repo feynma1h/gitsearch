@@ -23,7 +23,7 @@ from .config import DEFAULT_METADATA_WORKERS, DEFAULT_MIN_STARS
 from .db import create_pool
 from .rate_limiter import RateLimiter
 from .shard_generator import generate_shards
-from .worker import worker
+from .worker import CrawlStats, worker
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ async def _run(args: argparse.Namespace) -> None:
 
     logger.info("Generated %d shards (min_stars=%d)", len(shards), args.min_stars)
 
+    stats = CrawlStats(shards_total=len(shards))
     limiter = RateLimiter(name="graphql")
     pool = await create_pool()
 
@@ -95,7 +96,7 @@ async def _run(args: argparse.Namespace) -> None:
         async with aiohttp.ClientSession(connector=connector) as session:
             workers = [
                 asyncio.create_task(
-                    worker(i, queue, limiter, session, token, pool, deadline)
+                    worker(i, queue, limiter, session, token, pool, stats, deadline)
                 )
                 for i in range(args.workers)
             ]
@@ -119,6 +120,23 @@ async def _run(args: argparse.Namespace) -> None:
 
     elapsed = time.monotonic() - start
     logger.info("Crawl finished in %.1fs", elapsed)
+
+    # Always print the summary, even on early exit. Without this the only
+    # signal that the crawl went badly is a flood of ERROR lines mid-log,
+    # which is easy to miss. With it, "9 of 85 shards completed" is right
+    # there at the end.
+    logger.info(
+        "Summary: %d/%d shards completed, %d aborted, %d repos inserted.",
+        stats.shards_completed, stats.shards_total,
+        stats.shards_aborted, stats.repos_inserted,
+    )
+    if stats.shards_aborted:
+        logger.warning(
+            "Aborted shards (likely candidates for re-running with lower "
+            "concurrency): %s",
+            ", ".join(stats.aborted_shard_names[:10])
+            + ("..." if len(stats.aborted_shard_names) > 10 else ""),
+        )
 
 
 def main() -> None:

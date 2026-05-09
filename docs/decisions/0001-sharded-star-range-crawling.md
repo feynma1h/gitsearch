@@ -33,8 +33,8 @@ millions of repos at <10 stars, only thousands at >10K.
 
 ## Consequences
 
-- ✅ Crawls past the 1000-result cap. ~100K repos in ~4 minutes on a
-  single token.
+- ✅ Crawls past the 1000-result cap. ~100K repos in ~12 minutes on a
+  single token at the current `--workers=5` default.
 - ✅ Naturally parallelisable — workers pull shards from a queue.
 - ⚠️ Boundary correctness is subtle. The two failure modes to watch
   for: (a) writing `stars:50..59` and `stars:59..69` produces shards
@@ -50,6 +50,22 @@ millions of repos at <10 stars, only thousands at >10K.
   the floor where uniform-width single-star shards fit; for the
   current `--min-stars=200` default ([ADR 0003](0003-min-stars-threshold.md))
   this is well within the comfortable range.
+- ⚠️ Concurrency is bounded by GitHub's *secondary* rate limit, not
+  by the primary 5000 pts/hour budget. The secondary limit is
+  undocumented, fires on burst/concurrent-request patterns, and
+  surfaces only as HTTP 403 with `secondary rate limit` in the body.
+  An earlier version of this code ran 15 concurrent workers and saw
+  >80% of shards abort within minutes on the high-star end of the
+  distribution (where shards are wider, queries are heavier, and
+  fewer concurrent slots are available before tripping the limit).
+  The fix was twofold: drop the default to 5 workers
+  ([`config.py:DEFAULT_METADATA_WORKERS`](../../crawler/src/config.py)),
+  and have `github_client` retry secondary-rate-limit responses
+  with a 60s+ backoff that triggers a global pause on the shared
+  `RateLimiter` so siblings also stop. Either fix alone is
+  insufficient: high concurrency without backoff catastrophically
+  fails; backoff without concurrency limits still wastes the first
+  several minutes of a crawl recovering.
 
 ## What would change this decision
 

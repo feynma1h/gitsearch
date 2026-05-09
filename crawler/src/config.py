@@ -18,9 +18,19 @@ from __future__ import annotations
 # 2026; see ADR 0003 for the rationale and what would change this.
 DEFAULT_MIN_STARS: int = 200
 
-# Concurrent workers in the metadata crawl. Tuned against the GraphQL
-# 5000 pts/hour budget; 15 workers @ 1 pt/query is a safe steady state.
-DEFAULT_METADATA_WORKERS: int = 15
+# Concurrent workers in the metadata crawl.
+#
+# 5 is the result of trial and error against GitHub's *secondary* rate
+# limit, which is a separate, undocumented mechanism layered on top of
+# the primary 5000 pts/hour budget. It triggers on patterns GitHub
+# considers abusive — particularly too many concurrent requests — and
+# is not visible in the GraphQL `rateLimit` block we use elsewhere.
+#
+# Earlier versions of this code defaulted to 15 workers and tripped the
+# secondary limit catastrophically: most shards aborted within minutes.
+# Dropping to 5 trades crawl wall time (~12 min vs ~4 min) for the
+# crawl actually completing. See ADR 0001.
+DEFAULT_METADATA_WORKERS: int = 5
 
 
 # --- README pass -----------------------------------------------------------
