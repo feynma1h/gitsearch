@@ -2,7 +2,7 @@
 
 **Find GitHub repos by what they do, not just by their name.**
 
-[Live demo →](https://REPLACE_USERNAME.github.io/gitsearch/)
+[Live demo →](https://feynma1h.github.io/gitsearch/)
 
 ```
 "fast http server in rust"   →   tokio-rs/axum, actix/actix-web, hyperium/hyper
