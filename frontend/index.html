@@ -3,34 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gitsearch</title>
+<title>gitsearch — semantic search over GitHub</title>
+<meta name="description" content="Find GitHub repos by what they do, not just by name. Semantic search over ~20K repositories with hybrid ranking by relevance, popularity, and recency.">
 <style>
   /* Design notes:
      - Single-column, centered, max-width 720px. Search results read better
        narrow than wide.
      - System font stack so it looks native everywhere.
-     - Restrained palette: one accent color (#0969da, GitHub blue), one
-       muted gray for chrome. No gradients, no shadows.
-     - Mobile-first; the same layout works on phones unchanged. */
+     - Restrained palette: GitHub blue accent, muted gray chrome.
+     - Mobile-first; same layout works on phones unchanged.
+     - Dark mode via prefers-color-scheme. */
 
   :root {
     --fg: #1f2328;
     --fg-muted: #59636e;
+    --fg-faint: #848d97;
     --bg: #ffffff;
     --bg-subtle: #f6f8fa;
+    --bg-skeleton: #e8edf2;
     --border: #d1d9e0;
     --accent: #0969da;
     --accent-hover: #0550ae;
+    --bar-similarity: #2da44e;
+    --bar-stars: #d4a72c;
+    --bar-recency: #8250df;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --fg: #e6edf3;
       --fg-muted: #9198a1;
+      --fg-faint: #6e7681;
       --bg: #0d1117;
       --bg-subtle: #151b23;
+      --bg-skeleton: #21262d;
       --border: #3d444d;
       --accent: #4493f8;
       --accent-hover: #6ca4f8;
+      --bar-similarity: #3fb950;
+      --bar-stars: #d29922;
+      --bar-recency: #a371f7;
     }
   }
   * { box-sizing: border-box; }
@@ -42,11 +53,31 @@
     background: var(--bg);
   }
   .container { max-width: 720px; margin: 0 auto; padding: 32px 16px 96px; }
+
+  /* Header */
+  header { margin-bottom: 16px; }
   h1 {
     font-size: 28px; font-weight: 600; margin: 0 0 4px;
     letter-spacing: -0.02em;
   }
-  .tagline { color: var(--fg-muted); margin: 0 0 24px; }
+  .tagline { color: var(--fg-muted); margin: 0 0 16px; }
+
+  /* About box (hidden after first search) */
+  .about {
+    margin: 0 0 20px;
+    padding: 14px 16px;
+    background: var(--bg-subtle);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--fg-muted);
+  }
+  .about p { margin: 0 0 4px; }
+  .about p:last-child { margin: 0; }
+  .about strong { color: var(--fg); font-weight: 600; }
+  .about a { color: var(--accent); text-decoration: none; }
+  .about a:hover { text-decoration: underline; }
+
+  /* Search */
   .search-form { margin-bottom: 16px; }
   .search-row { display: flex; gap: 8px; }
   .search-input {
@@ -101,14 +132,13 @@
   .weights input[type="range"] { width: 100%; }
   .weights output { font-variant-numeric: tabular-nums; text-align: right; }
 
+  /* Examples */
   .examples {
     margin-top: 24px; padding: 16px; background: var(--bg-subtle);
-    border-radius: 6px; font-size: 14px;
+    border-radius: 8px; font-size: 14px;
   }
   .examples-title { color: var(--fg-muted); margin-bottom: 8px; }
-  .examples-list {
-    display: flex; flex-wrap: wrap; gap: 8px;
-  }
+  .examples-list { display: flex; flex-wrap: wrap; gap: 8px; }
   .example-chip {
     padding: 4px 10px; background: var(--bg); border: 1px solid var(--border);
     border-radius: 999px; font-size: 13px; color: var(--accent);
@@ -116,16 +146,25 @@
   }
   .example-chip:hover { background: var(--accent); color: white; border-color: var(--accent); }
 
-  .status {
-    margin-top: 24px; color: var(--fg-muted); font-size: 14px;
-  }
+  /* Status line */
+  .status { margin-top: 24px; color: var(--fg-muted); font-size: 14px; }
   .status.error { color: #cf222e; }
 
-  .results { margin-top: 24px; list-style: none; padding: 0; }
+  /* Results */
+  .results { margin-top: 16px; list-style: none; padding: 0; }
   .result {
     padding: 16px 0; border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 12px;
   }
-  .result:first-child { border-top: none; padding-top: 0; }
+  .result:first-child { border-top: none; padding-top: 8px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 6px;
+    background: var(--bg-subtle);
+    object-fit: cover;
+  }
+  .result-body { min-width: 0; }   /* allow text truncation in flex/grid */
   .result-name {
     font-size: 16px; font-weight: 600; color: var(--accent);
     text-decoration: none;
@@ -141,78 +180,185 @@
     font-size: 12px; padding: 2px 8px; background: var(--bg-subtle);
     border-radius: 999px; color: var(--fg-muted);
   }
-  .scores {
-    font-variant-numeric: tabular-nums; font-size: 12px;
+
+  /* Score breakdown disclosure */
+  .why {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--fg-faint);
+  }
+  .why summary {
+    cursor: pointer; user-select: none;
+    list-style: none;     /* hide default disclosure triangle in some browsers */
+  }
+  .why summary::-webkit-details-marker { display: none; }
+  .why summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform 0.15s ease;
+  }
+  .why[open] summary::before { transform: rotate(90deg); }
+  .why summary:hover { color: var(--fg-muted); }
+  .why-body {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--bg-subtle);
+    border-radius: 6px;
+  }
+  .breakdown-bar {
+    display: flex; height: 8px; border-radius: 4px; overflow: hidden;
+    margin: 4px 0 8px; background: var(--bg-skeleton);
+  }
+  .breakdown-bar > div { transition: flex-basis 0.2s ease; }
+  .breakdown-bar .similarity { background: var(--bar-similarity); }
+  .breakdown-bar .stars      { background: var(--bar-stars); }
+  .breakdown-bar .recency    { background: var(--bar-recency); }
+  .breakdown-rows {
+    display: grid;
+    grid-template-columns: 12px auto 1fr auto;
+    gap: 4px 10px;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .swatch {
+    width: 10px; height: 10px; border-radius: 2px;
+  }
+  .breakdown-label { color: var(--fg-muted); }
+  .breakdown-value { color: var(--fg); }
+  .breakdown-formula {
+    margin-top: 6px;
+    color: var(--fg-faint);
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* Skeleton loading state */
+  .skeleton-list { margin-top: 16px; list-style: none; padding: 0; }
+  .skeleton {
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 12px;
+  }
+  .skeleton:first-child { border-top: none; padding-top: 8px; }
+  .skeleton-avatar, .skeleton-line {
+    background: var(--bg-skeleton);
+    border-radius: 6px;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .skeleton-avatar { width: 40px; height: 40px; }
+  .skeleton-line { height: 14px; margin-bottom: 6px; border-radius: 4px; }
+  .skeleton-line.short { width: 35%; }
+  .skeleton-line.medium { width: 75%; }
+  .skeleton-line.long { width: 100%; }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  /* Footer */
+  footer {
+    margin-top: 64px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--fg-faint);
+    text-align: center;
+  }
+  footer a { color: var(--fg-muted); text-decoration: none; }
+  footer a:hover { color: var(--accent); text-decoration: underline; }
+  kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 3px;
     color: var(--fg-muted);
   }
-  .scores .key { opacity: 0.7; }
 </style>
 </head>
 <body>
 <div class="container">
+<header>
   <h1>gitsearch</h1>
   <p class="tagline">Semantic search over GitHub repositories.</p>
+</header>
 
-  <form class="search-form" id="search-form">
-    <div class="search-row">
-      <input class="search-input" id="q" type="text" placeholder="What are you looking for?" autocomplete="off" autofocus>
-      <button class="search-button" id="submit" type="submit">Search</button>
-    </div>
+<aside class="about" id="about">
+  <p>Type what you're looking for in plain English — <strong>"fast http server in rust"</strong>, <strong>"vector database for embeddings"</strong> — and get back repos ranked by what they actually do, not by keyword overlap.</p>
+  <p>Searches a corpus of <strong>~20,000 GitHub repositories</strong> with hybrid ranking that combines semantic similarity, popularity, and recency. <a href="https://github.com/REPLACE_USERNAME/gitsearch" target="_blank" rel="noopener">See how it's built →</a></p>
+</aside>
 
-    <div class="filters">
-      <label>Language <input type="text" id="language" placeholder="any"></label>
-      <label>Min stars <input type="number" id="min-stars" min="0" placeholder="0"></label>
-      <label><input type="checkbox" id="exclude-archived" checked> Hide archived</label>
-    </div>
-
-    <details class="advanced">
-      <summary>Tune scoring</summary>
-      <div class="weights">
-        <span>Similarity</span>
-        <input type="range" id="w-similarity" min="0" max="2" step="0.1" value="1.0">
-        <output for="w-similarity">1.0</output>
-
-        <span>Stars</span>
-        <input type="range" id="w-stars" min="0" max="2" step="0.1" value="0.3">
-        <output for="w-stars">0.3</output>
-
-        <span>Recency</span>
-        <input type="range" id="w-recency" min="0" max="2" step="0.1" value="0.2">
-        <output for="w-recency">0.2</output>
-      </div>
-    </details>
-  </form>
-
-  <div class="examples" id="examples">
-    <div class="examples-title">Try one of these:</div>
-    <div class="examples-list">
-      <button class="example-chip" type="button">fast http server in rust</button>
-      <button class="example-chip" type="button">kubernetes package manager</button>
-      <button class="example-chip" type="button">vector database for embeddings</button>
-      <button class="example-chip" type="button">static site generator</button>
-      <button class="example-chip" type="button">javascript testing framework</button>
-    </div>
+<form class="search-form" id="search-form">
+  <div class="search-row">
+    <input class="search-input" id="q" type="text" placeholder="What are you looking for?" autocomplete="off" autofocus>
+    <button class="search-button" id="submit" type="submit">Search</button>
   </div>
 
-  <div class="status" id="status"></div>
-  <ol class="results" id="results"></ol>
+  <div class="filters">
+    <label>Language <input type="text" id="language" placeholder="any"></label>
+    <label>Min stars <input type="number" id="min-stars" min="0" placeholder="0"></label>
+    <label><input type="checkbox" id="exclude-archived" checked> Hide archived</label>
+  </div>
+
+  <details class="advanced">
+    <summary>Tune scoring</summary>
+    <div class="weights">
+      <span>Similarity</span>
+      <input type="range" id="w-similarity" min="0" max="2" step="0.1" value="1.0">
+      <output for="w-similarity">1.0</output>
+
+      <span>Stars</span>
+      <input type="range" id="w-stars" min="0" max="2" step="0.1" value="0.3">
+      <output for="w-stars">0.3</output>
+
+      <span>Recency</span>
+      <input type="range" id="w-recency" min="0" max="2" step="0.1" value="0.2">
+      <output for="w-recency">0.2</output>
+    </div>
+  </details>
+</form>
+
+<div class="examples" id="examples">
+  <div class="examples-title">Try one of these:</div>
+  <div class="examples-list">
+    <button class="example-chip" type="button">fast http server in rust</button>
+    <button class="example-chip" type="button">kubernetes package manager</button>
+    <button class="example-chip" type="button">vector database for embeddings</button>
+    <button class="example-chip" type="button">static site generator</button>
+    <button class="example-chip" type="button">javascript testing framework</button>
+  </div>
+</div>
+
+<div class="status" id="status"></div>
+<ol class="results" id="results"></ol>
+<ol class="skeleton-list" id="skeleton" hidden></ol>
+
+<footer>
+  <a href="https://github.com/REPLACE_USERNAME/gitsearch" target="_blank" rel="noopener">source</a>
+  ·
+  press <kbd>/</kbd> to search, <kbd>Esc</kbd> to clear
+</footer>
 </div>
 
 <script>
-  /* The whole client. ~80 lines of vanilla JS.
-   *
-   * Configuration:
-   *   - SEARCH_URL: where the search service lives. For local dev,
-   *     localhost:8002 is fine. For production, set this to your
-   *     deployed search service URL.
+  /* Configuration:
+   *   - SEARCH_URL: the deployed search service. The localhost fallback
+   *     supports running the file from `python -m http.server` during dev.
    */
-  const SEARCH_URL = (window.GITSEARCH_API_URL || "https://gitsearch-search-148185858207.asia-southeast1.run.app") + "/search";
+  const SEARCH_URL = (window.GITSEARCH_API_URL || "http://localhost:8002") + "/search";
 
   const $ = id => document.getElementById(id);
   const form = $("search-form");
   const status = $("status");
   const results = $("results");
+  const skeleton = $("skeleton");
   const examples = $("examples");
+  const about = $("about");
+  const queryInput = $("q");
 
   // Weight slider live values.
   for (const k of ["similarity", "stars", "recency"]) {
@@ -224,14 +370,28 @@
   // Example chips.
   examples.querySelectorAll(".example-chip").forEach(btn => {
     btn.addEventListener("click", () => {
-      $("q").value = btn.textContent;
+      queryInput.value = btn.textContent;
       form.requestSubmit();
     });
   });
 
+  // Keyboard shortcuts.
+  document.addEventListener("keydown", e => {
+    // "/" focuses the search box (unless already typing in some input).
+    if (e.key === "/" && document.activeElement.tagName !== "INPUT") {
+      e.preventDefault();
+      queryInput.focus();
+      queryInput.select();
+    }
+    // Esc clears the search box when it's focused.
+    if (e.key === "Escape" && document.activeElement === queryInput) {
+      queryInput.value = "";
+    }
+  });
+
   form.addEventListener("submit", async e => {
     e.preventDefault();
-    const query = $("q").value.trim();
+    const query = queryInput.value.trim();
     if (!query) return;
 
     const filters = {};
@@ -245,10 +405,13 @@
       recency: parseFloat($("w-recency").value),
     };
 
+    // Hide first-time-only chrome and show loading state.
     examples.style.display = "none";
+    about.style.display = "none";
     status.className = "status";
-    status.textContent = "Searching...";
+    status.textContent = "";
     results.innerHTML = "";
+    showSkeleton();
     $("submit").disabled = true;
 
     try {
@@ -259,8 +422,10 @@
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
       const data = await resp.json();
+      hideSkeleton();
       render(data);
     } catch (err) {
+      hideSkeleton();
       status.className = "status error";
       status.textContent = `Error: ${err.message}`;
     } finally {
@@ -268,29 +433,119 @@
     }
   });
 
+  function showSkeleton() {
+    skeleton.hidden = false;
+    skeleton.innerHTML = "";
+    for (let i = 0; i < 5; i++) {
+      const li = document.createElement("li");
+      li.className = "skeleton";
+      li.innerHTML = `
+        <div class="skeleton-avatar"></div>
+        <div>
+          <div class="skeleton-line short"></div>
+          <div class="skeleton-line long"></div>
+          <div class="skeleton-line medium"></div>
+        </div>
+      `;
+      skeleton.appendChild(li);
+    }
+  }
+  function hideSkeleton() {
+    skeleton.hidden = true;
+    skeleton.innerHTML = "";
+  }
+
   function render(data) {
     const { hits, took_ms, model } = data;
-    status.textContent = `${hits.length} result${hits.length === 1 ? "" : "s"} in ${took_ms} ms · model: ${model}`;
+    status.textContent =
+      `${hits.length} result${hits.length === 1 ? "" : "s"} in ${took_ms} ms · model: ${model}`;
     results.innerHTML = "";
     for (const hit of hits) {
-      const li = document.createElement("li");
-      li.className = "result";
-      const meta = [
-        hit.primary_language ? `<span>${esc(hit.primary_language)}</span>` : "",
-        `<span>★ ${fmtStars(hit.stars)}</span>`,
-        hit.pushed_at ? `<span>updated ${fmtDate(hit.pushed_at)}</span>` : "",
-        `<span class="scores"><span class="key">sim</span> ${hit.similarity.toFixed(3)} · <span class="key">score</span> ${hit.hybrid_score.toFixed(3)}</span>`,
-      ].filter(Boolean).join("");
-      const topics = (hit.topics || []).slice(0, 5)
-        .map(t => `<span class="topic">${esc(t)}</span>`).join("");
-      li.innerHTML = `
+      results.appendChild(renderHit(hit));
+    }
+  }
+
+  function renderHit(hit) {
+    const li = document.createElement("li");
+    li.className = "result";
+
+    const owner = hit.full_name.split("/")[0];
+    const avatarUrl = `https://github.com/${encodeURIComponent(owner)}.png?size=80`;
+
+    const meta = [
+      hit.primary_language ? `<span>${esc(hit.primary_language)}</span>` : "",
+      `<span>★ ${fmtStars(hit.stars)}</span>`,
+      hit.pushed_at ? `<span>updated ${fmtDate(hit.pushed_at)}</span>` : "",
+    ].filter(Boolean).join("");
+
+    const topicsHtml = (hit.topics || []).slice(0, 5)
+      .map(t => `<span class="topic">${esc(t)}</span>`).join("");
+
+    li.innerHTML = `
+      <img class="avatar" src="${esc(avatarUrl)}" alt="" loading="lazy"
+           onerror="this.style.visibility='hidden'">
+      <div class="result-body">
         <a class="result-name" href="${esc(hit.url)}" target="_blank" rel="noopener">${esc(hit.full_name)}</a>
         ${hit.description ? `<p class="result-desc">${esc(hit.description)}</p>` : ""}
         <div class="result-meta">${meta}</div>
-        ${topics ? `<div class="topics">${topics}</div>` : ""}
+        ${topicsHtml ? `<div class="topics">${topicsHtml}</div>` : ""}
+        ${renderWhy(hit)}
+      </div>
+    `;
+    return li;
+  }
+
+  /* The "why this rank?" disclosure.
+   *
+   * Shows the breakdown of hybrid_score into its three components. Each
+   * component is already weight-multiplied (the API returns them that way),
+   * so they sum exactly to hybrid_score. We render:
+   *   - a horizontal stacked bar showing relative contribution
+   *   - a row per component with its colored swatch, raw number, and
+   *     percentage of the total
+   *   - a one-liner showing the formula in numbers
+   *
+   * If hybrid_score happens to be ~0 (degenerate case — all weights zero
+   * or all components zero), we render a fallback message instead of
+   * dividing by zero. */
+  function renderWhy(hit) {
+    const sim = hit.similarity_contribution;
+    const stars = hit.stars_contribution;
+    const rec = hit.recency_contribution;
+    const total = hit.hybrid_score;
+
+    if (total <= 0.0001) {
+      return `
+        <details class="why">
+          <summary>why this rank?</summary>
+          <div class="why-body">All scoring components are zero. This result was returned by the candidate fetch but contributes nothing to ranking.</div>
+        </details>
       `;
-      results.appendChild(li);
     }
+
+    const pct = v => ((v / total) * 100).toFixed(0);
+    const sw = cls => `<span class="swatch" style="background: var(--bar-${cls})"></span>`;
+
+    return `
+      <details class="why">
+        <summary>why this rank?</summary>
+        <div class="why-body">
+          <div class="breakdown-bar">
+            <div class="similarity" style="flex-basis: ${pct(sim)}%"></div>
+            <div class="stars"      style="flex-basis: ${pct(stars)}%"></div>
+            <div class="recency"    style="flex-basis: ${pct(rec)}%"></div>
+          </div>
+          <div class="breakdown-rows">
+            ${sw('similarity')}<span class="breakdown-label">Similarity</span><span class="breakdown-value">${sim.toFixed(3)}</span><span class="breakdown-label">${pct(sim)}%</span>
+            ${sw('stars')}<span class="breakdown-label">Stars</span><span class="breakdown-value">${stars.toFixed(3)}</span><span class="breakdown-label">${pct(stars)}%</span>
+            ${sw('recency')}<span class="breakdown-label">Recency</span><span class="breakdown-value">${rec.toFixed(3)}</span><span class="breakdown-label">${pct(rec)}%</span>
+          </div>
+          <div class="breakdown-formula">
+            ${sim.toFixed(3)} + ${stars.toFixed(3)} + ${rec.toFixed(3)} = ${total.toFixed(3)} hybrid score
+          </div>
+        </div>
+      </details>
+    `;
   }
 
   function esc(s) {

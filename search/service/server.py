@@ -26,9 +26,12 @@ from typing import List, Optional
 
 import aiohttp
 import asyncpg
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from .config import (
     DEFAULT_EMBEDDING_SERVICE_URL,
@@ -90,6 +93,21 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Search Service", lifespan=lifespan)
 
+# Rate limiting. Per-IP throttle on /search keeps one bad actor from
+# burning embedding-service capacity or Supabase row reads. Health
+# checks are intentionally not throttled so Fly's healthchecks never
+# trip the limit.
+#
+# get_remote_address pulls the client IP from request.client.host;
+# behind Fly's edge proxy the real IP is in X-Forwarded-For, which
+# slowapi's default extractor handles correctly. The 30/minute default
+# is generous for human use (two searches every four seconds is
+# already aggressive typing) and tight enough that a script burst
+# gets throttled within a second.
+limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS — let the browser talk to us from a separate frontend origin.
 # In dev, frontends run on localhost:3000, :5173, :8000, etc. In
 # production, the frontend's deployed origin should be the only entry
@@ -150,6 +168,12 @@ class HitModel(BaseModel):
     pushed_at: Optional[str]  # ISO 8601 string for cleaner JSON
     similarity: float
     hybrid_score: float
+    # Per-component contributions to hybrid_score (already weight-multiplied).
+    # Their sum equals hybrid_score. Exposed so the UI can show why a result
+    # ranked where it did. See ADR 0013.
+    similarity_contribution: float
+    stars_contribution: float
+    recency_contribution: float
 
 
 class SearchResponse(BaseModel):
@@ -173,7 +197,8 @@ async def health() -> dict:
 
 
 @app.post("/search", response_model=SearchResponse)
-async def do_search(req: SearchRequest) -> SearchResponse:
+@limiter.limit("30/minute")
+async def do_search(request: Request, req: SearchRequest) -> SearchResponse:
     if _pool is None or _embedder is None:
         raise HTTPException(503, "service not ready")
 
@@ -226,4 +251,7 @@ def _hit_to_model(hit: SearchHit) -> HitModel:
         pushed_at=hit.pushed_at.isoformat() if hit.pushed_at is not None else None,
         similarity=hit.similarity,
         hybrid_score=hit.hybrid_score,
+        similarity_contribution=hit.similarity_contribution,
+        stars_contribution=hit.stars_contribution,
+        recency_contribution=hit.recency_contribution,
     )

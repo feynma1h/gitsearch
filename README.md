@@ -1,20 +1,73 @@
 # gitsearch
 
-Semantic search over GitHub repositories. Type a natural-language
-query like *"fast http server in rust"* and get back ranked repos
-based on what each repo *is*, not just keyword overlap on the name.
+**Find GitHub repos by what they do, not just by their name.**
 
-Three components, each in its own subdirectory with its own README:
+[Live demo →](https://REPLACE_USERNAME.github.io/gitsearch/)
+
+```
+"fast http server in rust"   →   tokio-rs/axum, actix/actix-web, hyperium/hyper
+"kubernetes package manager" →   helm/helm
+"vector database for embeddings" →  qdrant/qdrant, weaviate/weaviate, pgvector/pgvector
+```
+
+Type a natural-language query, get back GitHub repos ranked by semantic
+relevance, popularity, and recency. ~20,000 repos indexed; queries
+return in ~30ms once the services are warm.
+
+## What this is
+
+A small but complete production-shaped system. Three Python services
+(crawler, indexer, search) that share a Postgres+pgvector database,
+plus a static frontend, all deployable to free-tier cloud
+infrastructure. Every non-trivial design decision is recorded as an
+[Architecture Decision Record](docs/decisions/) with the alternatives
+considered and the conditions under which the decision should be
+revisited.
+
+The components, each with its own README:
 
 - [`crawler/`](crawler/) — async crawler that fetches ~100K repo
-  metadata via GraphQL and READMEs via REST, into Postgres.
-- [`indexer/`](indexer/) — FastAPI embedding service (bge-small-en-v1.5)
-  + async pipeline that embeds repos and writes vectors to pgvector.
-- [`search/`](search/) — FastAPI service that takes a query, embeds it,
-  runs hybrid vector + metadata search, and returns ranked repos.
+  metadata via GitHub GraphQL and READMEs via REST, into Postgres.
+- [`indexer/`](indexer/) — FastAPI embedding service
+  (`bge-small-en-v1.5`) + async pipeline that embeds repos and writes
+  vectors to pgvector.
+- [`search/`](search/) — FastAPI service that takes a query, embeds
+  it, runs hybrid vector + metadata search, and returns ranked repos.
+- [`frontend/`](frontend/) — single-file static UI (no build step).
 
 The components are deliberately separable. They share one Postgres
 database; they don't share Python imports.
+
+## Things worth a closer look
+
+- **[ADR 0013](docs/decisions/0013-hybrid-scoring-formula.md)** — the
+  hybrid scoring formula combining semantic similarity, log-normalised
+  star count, and exponential recency decay. Each component is
+  normalised to `[0, 1]` so the weights are interpretable; the math
+  lives in [`search/service/ranking.py`](search/service/ranking.py)
+  (pure Python, fully unit-tested) and is mirrored in SQL in
+  [`search/service/db.py`](search/service/db.py).
+
+- **The over-fetch + re-rank pattern** for hybrid search. HNSW gives
+  top-K by similarity alone; we over-fetch candidates, then re-rank
+  by hybrid score in the same SQL statement. Documented in ADR 0013.
+
+- **[`indexer/pipeline/document_builder.py`](indexer/pipeline/document_builder.py)** —
+  the choice of *what text to feed the embedding model* turns out to
+  be at least as important as the model itself. ADR 0008 explains why
+  the metadata header goes before the README (truncation safety) and
+  why this decision is documented as policy.
+
+- **[`search/eval/`](search/eval/)** — an offline evaluation harness
+  that measures Recall@K and NDCG@K against a labelled query set.
+  Lets weight tuning be data-driven rather than vibes-driven. Read
+  [its README](search/eval/README.md) for the design choices.
+
+- **The unit tests focus on the parts where bugs are subtle and
+  silent** — shard-boundary correctness in the crawler, document
+  truncation in the indexer, scoring math in the search service.
+  Things where a test failing means you would otherwise have shipped
+  bad rankings without noticing.
 
 ## How the pieces fit
 

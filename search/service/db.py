@@ -61,7 +61,13 @@ class SearchFilters:
 
 @dataclass(frozen=True)
 class SearchHit:
-    """One result row, in the order ``ORDER BY hybrid_score DESC``."""
+    """One result row, in the order ``ORDER BY hybrid_score DESC``.
+
+    The three ``*_contribution`` fields are the per-component additions
+    to ``hybrid_score`` (already weight-multiplied), exposed so the UI
+    can show *why* a result ranked where it did. Their sum equals
+    ``hybrid_score``.
+    """
     repo_id: str
     full_name: str
     description: Optional[str]
@@ -72,6 +78,9 @@ class SearchHit:
     pushed_at: object  # datetime, but typing it that way pulls in datetime import here
     similarity: float
     hybrid_score: float
+    similarity_contribution: float
+    stars_contribution: float
+    recency_contribution: float
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +144,24 @@ WITH candidates AS (
       AND ($7::bool = FALSE OR r.is_archived = FALSE)
     ORDER BY e.embedding <=> $1::vector
     LIMIT $3
+),
+scored AS (
+    SELECT
+        c.repo_id,
+        c.similarity,
+        $8  * GREATEST(0, LEAST(1, c.similarity))               AS similarity_contribution,
+        $9  * LEAST(1.0, LOG(1 + r.stars) / {log_stars_denom})  AS stars_contribution,
+        $10 * CASE
+                WHEN r.pushed_at IS NULL THEN 0
+                ELSE EXP(
+                    - GREATEST(
+                        0,
+                        EXTRACT(EPOCH FROM (NOW() - r.pushed_at)) / 86400.0
+                    ) * LN(2) / $11
+                )
+              END                                                AS recency_contribution
+    FROM candidates c
+    JOIN repositories r ON r.id = c.repo_id
 )
 SELECT
     r.id            AS repo_id,
@@ -145,22 +172,13 @@ SELECT
     r.topics,
     r.stars,
     r.pushed_at,
-    c.similarity,
-    (
-        $8 * GREATEST(0, LEAST(1, c.similarity))
-      + $9 * LEAST(1.0, LOG(1 + r.stars) / {log_stars_denom})
-      + $10 * CASE
-                WHEN r.pushed_at IS NULL THEN 0
-                ELSE EXP(
-                    - GREATEST(
-                        0,
-                        EXTRACT(EPOCH FROM (NOW() - r.pushed_at)) / 86400.0
-                    ) * LN(2) / $11
-                )
-              END
-    ) AS hybrid_score
-FROM candidates c
-JOIN repositories r ON r.id = c.repo_id
+    s.similarity,
+    s.similarity_contribution,
+    s.stars_contribution,
+    s.recency_contribution,
+    (s.similarity_contribution + s.stars_contribution + s.recency_contribution) AS hybrid_score
+FROM scored s
+JOIN repositories r ON r.id = s.repo_id
 ORDER BY hybrid_score DESC
 LIMIT $12
 """.format(log_stars_denom=LOG_STARS_DENOMINATOR)
@@ -235,6 +253,9 @@ async def search(
             pushed_at=row["pushed_at"],
             similarity=float(row["similarity"]),
             hybrid_score=float(row["hybrid_score"]),
+            similarity_contribution=float(row["similarity_contribution"]),
+            stars_contribution=float(row["stars_contribution"]),
+            recency_contribution=float(row["recency_contribution"]),
         )
         for row in rows
     ]
