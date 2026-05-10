@@ -76,7 +76,7 @@ async def worker(
     # rate limit on first contact, especially from Actions runners
     # whose egress IPs are flagged more aggressively. 1.5s spacing
     # keeps the burst signal below GitHub's detection threshold.
-    await asyncio.sleep(worker_id * 20.0)
+    await asyncio.sleep(worker_id * 30.0)
 
     while True:
         try:
