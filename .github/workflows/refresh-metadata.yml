@@ -27,6 +27,6 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run metadata crawl
         working-directory: crawler
-        run: python -m src.main --workers 1 --min-stars 200
+        run: python -m src.main --workers 3 --min-stars 200
       - name: Report progress
         run: python scripts/check_progress.py --stage report
