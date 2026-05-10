@@ -27,14 +27,14 @@ import asyncpg
 _QUERIES = {
     "readme": """
         SELECT COUNT(*) FROM repositories
-        WHERE readme_status IS NULL
-          AND stargazers_count >= 200
+        WHERE readme_fetched_at IS NULL
+          AND is_archived = FALSE
     """,
     "index": """
         SELECT COUNT(*) FROM repositories r
-        LEFT JOIN repository_embeddings e ON e.repository_id = r.id
+        LEFT JOIN repository_embeddings e ON e.repo_id = r.id
         WHERE r.readme_status = 'success'
-          AND e.repository_id IS NULL
+          AND e.repo_id IS NULL
     """,
 }
 
@@ -46,7 +46,7 @@ _REPORT_QUERY = """
         (SELECT COUNT(*) FROM repositories
          WHERE readme_status = 'success') AS readme_success,
         (SELECT COUNT(*) FROM repository_embeddings) AS embeddings,
-        (SELECT MAX(updated_at) FROM repositories) AS last_metadata_update
+        (SELECT MAX(crawled_at) FROM repositories) AS last_crawled_at
 """
 
 
@@ -60,7 +60,7 @@ async def _probe(stage: str) -> int:
             print(f"readme_attempted:    {row['readme_attempted']:>8}")
             print(f"readme_success:      {row['readme_success']:>8}")
             print(f"embeddings:          {row['embeddings']:>8}")
-            print(f"last_metadata_update:{row['last_metadata_update']}")
+            print(f"last_crawled_at:     {row['last_crawled_at']}")
             return 0
 
         remaining = await conn.fetchval(_QUERIES[stage])
