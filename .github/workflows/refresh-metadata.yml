@@ -1,0 +1,32 @@
+name: Refresh Metadata
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"  # Sundays 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-pipeline
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.CRAWLER_GH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install crawler deps
+        working-directory: crawler
+        run: pip install -r requirements.txt
+      - name: Run metadata crawl
+        working-directory: crawler
+        run: python -m src.main --workers 5 --min-stars 200
+      - name: Report progress
+        run: python scripts/check_progress.py --stage report

@@ -1,0 +1,51 @@
+name: Refresh READMEs
+
+on:
+  workflow_run:
+    workflows: ["Refresh Metadata"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-pipeline
+  cancel-in-progress: false
+
+jobs:
+  readme-chunk:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # well under the 6-hour hard limit
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.CRAWLER_GH_TOKEN }}
+    outputs:
+      remaining: ${{ steps.probe.outputs.remaining }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install crawler deps
+        working-directory: crawler
+        run: pip install -r requirements.txt
+      - name: Run README chunk (5h budget)
+        working-directory: crawler
+        # 5 hours = 18000s. Leaves ~50min headroom under the timeout-minutes cap
+        # for setup, teardown, and the probe step.
+        run: python -m src.readme_pass --top-n 100000 --deadline-seconds 18000
+      - name: Probe remaining work
+        id: probe
+        run: python scripts/check_progress.py --stage readme || echo "stage_done=true" >> $GITHUB_ENV
+
+  rechunk:
+    needs: readme-chunk
+    if: ${{ needs.readme-chunk.outputs.remaining != '' && needs.readme-chunk.outputs.remaining != '0' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-trigger this workflow for the next chunk
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT }}
+        run: |
+          gh workflow run refresh-readme.yml --ref ${{ github.ref }} \
+            --repo ${{ github.repository }}

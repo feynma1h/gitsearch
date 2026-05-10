@@ -1,0 +1,93 @@
+name: Refresh Index
+
+on:
+  workflow_run:
+    workflows: ["Refresh READMEs"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-pipeline
+  cancel-in-progress: false
+
+jobs:
+  # Only run when the last README chunk succeeded AND no work remains.
+  # The previous workflow's last chunk emitted remaining=0, which bubbles up
+  # via workflow_run; we re-probe here for correctness.
+  gate:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      readme_done: ${{ steps.probe.outputs.readme_done }}
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r indexer/pipeline/requirements.txt
+      - id: probe
+        # Indexing should only start when README pass is fully drained; otherwise
+        # we'd embed a partial corpus and have to redo the work next week.
+        run: |
+          if python scripts/check_progress.py --stage readme; then
+            echo "readme_done=false" >> $GITHUB_OUTPUT
+          else
+            echo "readme_done=true" >> $GITHUB_OUTPUT
+          fi
+
+  index-chunk:
+    needs: gate
+    if: ${{ needs.gate.outputs.readme_done == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      EMBEDDING_SERVICE_URL: ${{ secrets.EMBEDDING_SERVICE_URL }}
+    outputs:
+      remaining: ${{ steps.probe.outputs.remaining }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install indexer deps
+        working-directory: indexer/pipeline
+        run: pip install -r requirements.txt
+      - name: Run indexing chunk (5h budget)
+        working-directory: indexer/pipeline
+        run: python -m main --top-n 100000 --deadline-seconds 18000
+      - name: Probe remaining work
+        id: probe
+        run: python scripts/check_progress.py --stage index || true
+
+  rechunk:
+    needs: index-chunk
+    if: ${{ needs.index-chunk.outputs.remaining != '' && needs.index-chunk.outputs.remaining != '0' }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT }}
+        run: |
+          gh workflow run refresh-index.yml --ref ${{ github.ref }} \
+            --repo ${{ github.repository }}
+
+  finalize:
+    needs: index-chunk
+    if: ${{ needs.index-chunk.outputs.remaining == '0' }}
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r indexer/pipeline/requirements.txt
+      - name: Final report
+        run: python scripts/check_progress.py --stage report
+      - name: Regression check
+        run: python scripts/check_regression.py

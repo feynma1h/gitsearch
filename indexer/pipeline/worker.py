@@ -30,9 +30,20 @@ async def pipeline_worker(
     pool: asyncpg.Pool,
     batch_size: int = DEFAULT_BATCH_SIZE,
     progress: Optional["ProgressCounter"] = None,
+    deadline: Optional[float] = None,
 ) -> None:
-    """Drain the queue in batches until empty."""
+    """Drain the queue in batches until empty or deadline reached.
+
+    ``deadline`` is an absolute ``time.monotonic()`` timestamp. When set,
+    the worker checks it before pulling each batch and exits cleanly past
+    that point — the in-flight batch (if any) finishes first, so no work
+    is wasted. Used by the chunked refresh workflow to stay under the
+    6-hour Actions job limit.
+    """
     while True:
+        if deadline is not None and time.monotonic() > deadline:
+            logger.info("[w%d] deadline reached; exiting", worker_id)
+            return
         batch = _collect_batch(queue, batch_size)
         if not batch:
             return

@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import time
+from typing import Optional
 
 import aiohttp
 
@@ -52,6 +53,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--top-n", type=int, default=20_000,
         help="Max repos to consider in this run, ordered by stars desc.",
+    )
+    parser.add_argument(
+        "--deadline-seconds", type=int, default=None,
+        help="Stop pulling new batches after this many seconds. In-flight "
+             "batches finish; remaining repos are left for the next run "
+             "(the pipeline is idempotent — it skips repos with existing "
+             "embeddings). Used by the chunked refresh workflow to stay "
+             "under the 6-hour Actions job limit.",
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -96,6 +105,10 @@ async def _run(args: argparse.Namespace) -> None:
         except NotImplementedError:
             pass
 
+    deadline: Optional[float] = None
+    if args.deadline_seconds is not None:
+        deadline = time.monotonic() + args.deadline_seconds
+
     start = time.monotonic()
 
     try:
@@ -104,7 +117,7 @@ async def _run(args: argparse.Namespace) -> None:
             workers = [
                 asyncio.create_task(
                     pipeline_worker(
-                        i, queue, client, pool, args.batch_size, progress,
+                        i, queue, client, pool, args.batch_size, progress, deadline,
                     )
                 )
                 for i in range(args.workers)
