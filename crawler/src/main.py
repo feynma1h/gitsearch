@@ -111,10 +111,16 @@ async def _run(args: argparse.Namespace) -> None:
                 logger.warning("Shutdown signal received; cancelling workers.")
                 for w in workers:
                     w.cancel()
-                await asyncio.gather(*workers, return_exceptions=True)
+                results = await asyncio.gather(*workers, return_exceptions=True)
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                        logger.error("[w%d] crashed with %s: %s", i, type(result).__name__, result)
             else:
                 stop_task.cancel()
-                await asyncio.gather(*workers, return_exceptions=True)
+                results = await asyncio.gather(*workers, return_exceptions=True)
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                        logger.error("[w%d] crashed with %s: %s", i, type(result).__name__, result)
     finally:
         await pool.close()
 

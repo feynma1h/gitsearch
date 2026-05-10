@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -72,3 +73,26 @@ def test_parse_rest_rate_limit_with_headers():
 def test_parse_rest_rate_limit_missing_headers():
     assert parse_rest_rate_limit({}) is None
     assert parse_rest_rate_limit({"X-RateLimit-Remaining": "5"}) is None
+
+
+async def test_pause_blocks_subsequent_wait_if_needed():
+    """A pause() call must cause a subsequent wait_if_needed() to sleep
+    for at least the pause duration, even when budget is high. This is
+    the secondary-rate-limit safety mechanism."""
+    limiter = RateLimiter(initial_budget=5000)
+    await limiter.pause(0.1)  # short pause for fast test
+    start = time.monotonic()
+    await limiter.wait_if_needed()
+    elapsed = time.monotonic() - start
+    assert elapsed >= 0.09  # allow a tiny tolerance
+
+
+async def test_pause_extends_but_does_not_shorten():
+    """A second, shorter pause() must not override an existing longer one."""
+    limiter = RateLimiter(initial_budget=5000)
+    await limiter.pause(0.2)
+    await limiter.pause(0.05)  # shorter; must be ignored
+    start = time.monotonic()
+    await limiter.wait_if_needed()
+    elapsed = time.monotonic() - start
+    assert elapsed >= 0.18  # honoured the longer of the two pauses

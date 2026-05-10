@@ -22,16 +22,6 @@ import asyncpg
 
 _REGRESSION_THRESHOLD = 0.95  # tolerate up to 5% drop (e.g., GitHub deletions)
 
-_ENSURE_TABLE = """
-    CREATE TABLE IF NOT EXISTS refresh_watermarks (
-        id              integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-        total_repos     integer NOT NULL,
-        readme_success  integer NOT NULL,
-        embeddings      integer NOT NULL,
-        recorded_at     timestamptz NOT NULL DEFAULT now()
-    )
-"""
-
 _CURRENT_COUNTS = """
     SELECT
         (SELECT COUNT(*) FROM repositories)                      AS total_repos,
@@ -45,7 +35,6 @@ async def _check() -> int:
     dsn = os.environ["DATABASE_URL"]
     conn = await asyncpg.connect(dsn)
     try:
-        await conn.execute(_ENSURE_TABLE)
         current = await conn.fetchrow(_CURRENT_COUNTS)
         prev = await conn.fetchrow("SELECT * FROM refresh_watermarks WHERE id = 1")
 

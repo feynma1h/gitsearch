@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -41,11 +41,23 @@ class RateLimiter:
         self._name = name
         self._remaining: int = initial_budget
         self._reset_at: Optional[datetime] = None
+        self._paused_until: Optional[datetime] = None
         self._lock = asyncio.Lock()
 
     async def wait_if_needed(self) -> None:
         """Block until it is safe to issue another request."""
         async with self._lock:
+            # Honour any global pause set by pause().
+            if self._paused_until is not None:
+                now = datetime.now(timezone.utc)
+                pause_remaining = (self._paused_until - now).total_seconds()
+                if pause_remaining > 0:
+                    logger.warning(
+                        "[%s] Globally paused; sleeping %.1fs.",
+                        self._name, pause_remaining,
+                    )
+                    await asyncio.sleep(pause_remaining)
+
             if self._remaining > self.LOW_WATER_MARK:
                 return
 
@@ -63,6 +75,25 @@ class RateLimiter:
                     self._name, self._remaining, sleep_seconds,
                 )
                 await asyncio.sleep(sleep_seconds + 1.0)  # +1s safety margin
+
+    async def pause(self, seconds: float) -> None:
+        """Globally pause all workers for at least ``seconds``.
+
+        Called by ``github_client`` when GitHub's secondary rate limit
+        fires: a single worker hitting the limit indicates the burst
+        pattern is too aggressive, so all sibling workers should hold
+        off too. The pause window extends (max of existing and new) so
+        concurrent calls don't shorten an already-set pause.
+        """
+        async with self._lock:
+            new_pause_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+            if self._paused_until is None or new_pause_until > self._paused_until:
+                self._paused_until = new_pause_until
+                logger.warning(
+                    "[%s] Global pause until %s (%.1fs from now).",
+                    self._name, self._paused_until.isoformat(timespec="seconds"),
+                    seconds,
+                )
 
     async def update(self, remaining: int, reset_at: datetime) -> None:
         """Record the latest rate-limit state.
