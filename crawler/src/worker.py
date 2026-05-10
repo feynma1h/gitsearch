@@ -69,6 +69,15 @@ async def worker(
         deadline: Optional ``time.monotonic()`` value past which the worker
             stops accepting new shards. Useful to bound total runtime.
     """
+
+    # Per-worker startup stagger. All workers are created in a tight
+    # loop in main.py, so without this they all hit GitHub within
+    # milliseconds — exactly the burst pattern that trips the secondary
+    # rate limit on first contact, especially from Actions runners
+    # whose egress IPs are flagged more aggressively. 1.5s spacing
+    # keeps the burst signal below GitHub's detection threshold.
+    await asyncio.sleep(worker_id * 1.5)
+
     while True:
         try:
             shard = queue.get_nowait()
