@@ -11,8 +11,9 @@
 ```
 
 Type a natural-language query, get back GitHub repos ranked by semantic
-relevance, popularity, and recency. ~20,000 repos indexed; queries
-return in ~30ms once the services are warm.
+relevance, popularity, and recency. ~280,000 repos crawled, ~20,000
+fully indexed with embeddings; queries return in ~30ms once the services
+are warm (~15s on first request after idle, due to Cloud Run scale-to-zero).
 
 ## What this is
 
@@ -26,7 +27,7 @@ revisited.
 
 The components, each with its own README:
 
-- [`crawler/`](crawler/) — async crawler that fetches ~100K repo
+- [`crawler/`](crawler/) — async crawler that fetches ~280K repo
   metadata via GitHub GraphQL and READMEs via REST, into Postgres.
 - [`indexer/`](indexer/) — FastAPI embedding service
   (`bge-small-en-v1.5`) + async pipeline that embeds repos and writes
@@ -58,6 +59,15 @@ database; they don't share Python imports.
   the metadata header goes before the README (truncation safety) and
   why this decision is documented as policy.
 
+- **[ADR 0001](docs/decisions/0001-sharded-star-range-crawling.md)** —
+  density-calibrated star-range sharding with the long history of how
+  the band layout got there. Three production incidents shaped this
+  ADR: the original 1000-result-cap discovery, the secondary
+  rate-limit incident at 15 workers, and the structural undersizing
+  of low-star bands that was only caught by an explicit population
+  audit. Worth reading as a case study in how an ADR accumulates the
+  hard-won lessons the code itself doesn't teach.
+
 - **[`search/eval/`](search/eval/)** — an offline evaluation harness
   that measures Recall@K and NDCG@K against a labelled query set.
   Lets weight tuning be data-driven rather than vibes-driven. Read
@@ -78,8 +88,8 @@ database; they don't share Python imports.
               └─────────┬─────────┘
                         │
                 ┌───────▼────────┐
-                │    crawler     │   metadata crawl: ~4 min
-                │   (batch job)  │   readme pass: ~4 hr / 20K repos
+                │    crawler     │   metadata crawl: ~25 min local
+                │   (batch job)  │   readme pass: ~16 hr / 280K repos
                 └───────┬────────┘
                         │ writes
                         ▼
@@ -107,10 +117,10 @@ database; they don't share Python imports.
                                               (pgvector + HNSW)
 ```
 
-There's one schema migrated in three steps (`sql/0001`, `0002`, `0003`)
-and three Python services that don't share code — each can be deployed,
-tested, and reasoned about independently. Cross-component coupling is
-through Postgres and HTTP, both of which are easy to inspect.
+There's one schema migrated in four steps (`sql/0001..0004`) and three
+Python services that don't share code — each can be deployed, tested,
+and reasoned about independently. Cross-component coupling is through
+Postgres and HTTP, both of which are easy to inspect.
 
 ## End-to-end run (compose)
 
@@ -121,13 +131,13 @@ cp .env.example .env
 
 # 2. Bring up Postgres, embedding service, search service.
 make up                   # docker compose up -d
-make migrate              # apply sql/0001..0003
+make migrate              # apply sql/0001..0004
 
 # 3. Populate the corpus. Batch jobs that run from the host.
 make install              # one-time: pip install for all components
-make crawl                # ~4 min for 100K repos (5000 GraphQL pts/hr)
-make readmes              # ~4 hr for 20K repos (REST is rate-bound)
-make index                # ~30 min for 20K repos (CPU embedding)
+make crawl                # ~25 min for 280K repos (5000 GraphQL pts/hr)
+make readmes              # ~16 hr for 280K repos (REST is rate-bound)
+make index                # ~8 hr for 280K repos (CPU embedding)
 make build-hnsw           # one-time, AFTER index finishes (ADR 0011)
 
 # 4. Search.
@@ -165,6 +175,44 @@ make serve-search &
 make eval                 # sanity check
 ```
 
+## Deployed system
+
+The live demo runs on free-tier infrastructure. End-to-end:
+
+| Component               | Where it runs                            | Why there                                                                  |
+| ----------------------- | ---------------------------------------- | -------------------------------------------------------------------------- |
+| Postgres + pgvector     | Supabase (Pro, ap-southeast-1)           | Managed pgvector with PITR; cheaper and lower-effort than self-hosting RDS |
+| Embedding service       | Google Cloud Run (asia-southeast1, 2 GiB)| Scale-to-zero between requests; ~15s cold start                            |
+| Search service          | Google Cloud Run (asia-southeast1, 512 MiB)| Same; tuned for embedding-service cold-start tolerance                   |
+| Frontend                | GitHub Pages                             | Static; deploys via `.github/workflows/deploy-frontend.yml`                |
+| Weekly corpus refresh   | GitHub Actions                           | Three chained workflows; see below                                         |
+
+**Weekly corpus refresh** runs as three chained GitHub Actions
+workflows in [`.github/workflows/`](.github/workflows/):
+
+1. `refresh-metadata.yml` — runs the metadata crawl. Single ~5-hour
+   job (Cloud-CI egress IPs are throttled hard by GitHub's secondary
+   rate limit; see ADR 0001's "CI-IP throttling" consequence).
+2. `refresh-readme.yml` — fetches READMEs in 5-hour chunks. The job
+   self-rechunks via `gh workflow run` until a SQL probe reports no
+   remaining work. Resumability is free — `readme_pass.py` only
+   selects rows where `readme_fetched_at IS NULL`.
+3. `refresh-index.yml` — embeds new repos in 5-hour chunks. Same
+   self-rechunk pattern. Final job runs a regression check against
+   `refresh_watermarks` and fails the workflow if any corpus count
+   dropped >5% since the last successful refresh.
+
+The full design (chunking strategy, watermark-based regression check,
+the `WORKFLOW_DISPATCH_PAT` requirement for self-rechunking) is in
+[ADR 0014](docs/decisions/0014-chunked-actions-refresh.md).
+
+**Cost.** Approximately $30/month: Supabase Pro ($25) plus a single
+Cloud Run min-instance on the search service ($5) to eliminate
+cold-start latency. The embedding service stays scale-to-zero — it's
+called from the search service's hot path, but only on cache misses,
+and the Cloud Run cold-start delay is acceptable given indexing only
+happens weekly.
+
 ## Project layout
 
 ```
@@ -174,13 +222,18 @@ gitsearch/
 ├── Makefile               ← common tasks; see `make help`
 ├── .env.example
 │
+├── .github/workflows/     ← deploy-frontend + 3-stage refresh pipeline
+│
 ├── docs/
-│   └── decisions/         ← all ADRs (0001..0012); one decision per file
+│   └── decisions/         ← all ADRs (0001..0014); one decision per file
 │
 ├── sql/                   ← migrations applied in numeric order
 │   ├── 0001_initial_schema.sql
 │   ├── 0002_readme_columns.sql
-│   └── 0003_repository_embeddings.sql
+│   ├── 0003_repository_embeddings.sql
+│   └── 0004_refresh_watermarks.sql
+│
+├── scripts/               ← operational scripts (progress probes, regression checks)
 │
 ├── crawler/               ← async crawler, GraphQL + REST -> Postgres
 ├── indexer/               ← embedding service + indexing pipeline
@@ -197,13 +250,14 @@ limitations.
 This project documents its design decisions as Architecture Decision
 Records (ADRs) in [`docs/decisions/`](docs/decisions/). Every
 non-trivial choice — sharded crawling strategy, separate embeddings
-table, HTTP over gRPC, HNSW over IVFFlat, hybrid scoring formula — has
-an ADR explaining what was chosen, what was rejected, and the
-conditions under which the decision should be revisited.
+table, HTTP over gRPC, HNSW over IVFFlat, hybrid scoring formula,
+chunked CI refresh — has an ADR explaining what was chosen, what was
+rejected, and the conditions under which the decision should be
+revisited.
 
 The format is uniform and append-only:
 [`docs/decisions/README.md`](docs/decisions/README.md) explains it and
-indexes the current 12 ADRs.
+indexes the current 14 ADRs.
 
 If you're considering a change to anything substantive in this codebase,
 **read the relevant ADR first**. The "What would change this decision"
@@ -220,10 +274,11 @@ make test
 ```
 
 The unit tests focus on the parts where bugs are subtle and silent:
-the crawler's shard-boundary math and rate limiter, the indexer's
-document-construction format, the search service's hybrid scoring.
-Integration tests against a live Postgres aren't in the unit-test
-set; the eval harness covers end-to-end search quality.
+the crawler's shard-boundary math and rate limiter (including the
+density-calibrated band layout), the indexer's document-construction
+format and worker-deadline behaviour, the search service's hybrid
+scoring. Integration tests against a live Postgres aren't in the
+unit-test set; the eval harness covers end-to-end search quality.
 
 ## Known gaps
 
@@ -233,7 +288,13 @@ discussed (or flagged for future discussion) in the ADRs:
 - **Single token, single instance.** The crawler runs on one GitHub
   token; the embedding service is one CPU process; the search service
   is one replica. Horizontal scale would be straightforward but isn't
-  needed for the 100K-repo target. See ADRs 0001, 0007, 0010.
+  needed for the current corpus size. See ADRs 0001, 0007, 0010.
+- **CI-IP throttling.** The crawler that runs at 5 workers in ~25 min
+  locally needs ~5 hours from a GitHub Actions runner because Azure
+  egress IPs are flagged aggressively by GitHub's secondary rate
+  limit. Documented in ADR 0001; the only real fix is a self-hosted
+  runner on a residential IP, which is more setup than the project
+  warrants.
 - **One embedding model at a time.** ADR 0006 enables A/B at the storage
   layer (the embeddings table is keyed by `model_name`), but the
   indexer pipeline and search service each currently use one. A
@@ -251,8 +312,3 @@ discussed (or flagged for future discussion) in the ADRs:
   Mentioned in ADR 0007 and the indexer README; doesn't have its own
   ADR yet because the right resolution depends on which model we
   switch to.
-- **Asymmetry in resumability.** The metadata crawl is non-resumable
-  (relies on `ON CONFLICT DO UPDATE` to make a re-run safe but
-  wasteful); the README pass and indexer pipeline both resume from
-  where they left off. The asymmetry is deliberate but not yet
-  documented as an ADR.
