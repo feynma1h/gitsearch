@@ -26,6 +26,10 @@ ENV/
 .coverage
 htmlcov/
 
+# ─── Jupyter ─────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+playground.ipynb
+
 # ─── Logs and runtime output ─────────────────────────────────────────────
 *.log
 logs/

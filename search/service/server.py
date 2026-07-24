@@ -26,6 +26,7 @@ from typing import List, Optional
 
 import aiohttp
 import asyncpg
+from anthropic import AsyncAnthropic
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -36,11 +37,24 @@ from slowapi.util import get_remote_address
 from .config import (
     DEFAULT_EMBEDDING_SERVICE_URL,
     DEFAULT_LIMIT,
+    GUIDE_MODEL,
+    GUIDE_RATE_LIMIT,
     MAX_LIMIT,
     MODEL_NAME,
 )
-from .db import SearchFilters, SearchHit, create_pool, search
+from .db import (
+    CachedGuide,
+    RepoForGuide,
+    SearchFilters,
+    SearchHit,
+    create_pool,
+    fetch_repo_for_guide,
+    get_cached_guide,
+    search,
+    upsert_guide,
+)
 from .embedding_client import EmbeddingClient, EmbeddingServiceError
+from .guide import GuideGenerationError, generate_guide
 from .ranking import (
     DEFAULT_RECENCY_HALF_LIFE_DAYS,
     DEFAULT_SIMILARITY_WEIGHT,
@@ -56,16 +70,20 @@ logger = logging.getLogger(__name__)
 _pool: Optional[asyncpg.Pool] = None
 _http: Optional[aiohttp.ClientSession] = None
 _embedder: Optional[EmbeddingClient] = None
+# Anthropic client for usage guides. Stays None when ANTHROPIC_API_KEY is
+# unset, which disables the /guide endpoint rather than failing at startup.
+_anthropic: Optional[AsyncAnthropic] = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Acquire shared resources at startup, release at shutdown.
 
-    Both the DB pool and the aiohttp session are expensive to create
-    per-request; we hold one of each for the life of the process.
+    The DB pool, the aiohttp session, and the Anthropic client are all
+    expensive to create per-request; we hold one of each for the life of
+    the process.
     """
-    global _pool, _http, _embedder
+    global _pool, _http, _embedder, _anthropic
 
     service_url = os.environ.get(
         "EMBEDDING_SERVICE_URL", DEFAULT_EMBEDDING_SERVICE_URL,
@@ -75,9 +93,17 @@ async def lifespan(_: FastAPI):
     _http = aiohttp.ClientSession()
     _embedder = EmbeddingClient(_http, service_url)
 
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        _anthropic = AsyncAnthropic()
+    else:
+        _anthropic = None
+        logger.warning(
+            "ANTHROPIC_API_KEY not set; the /guide endpoint is disabled."
+        )
+
     logger.info(
-        "Search service ready; model=%s, embedding service=%s",
-        MODEL_NAME, service_url,
+        "Search service ready; model=%s, embedding service=%s, guides=%s",
+        MODEL_NAME, service_url, "on" if _anthropic else "off",
     )
 
     yield
@@ -86,20 +112,22 @@ async def lifespan(_: FastAPI):
     # the pool when fast-shutting-down), then the pool.
     if _http is not None:
         await _http.close()
+    if _anthropic is not None:
+        await _anthropic.close()
     if _pool is not None:
         await _pool.close()
-    _pool = _http = _embedder = None
+    _pool = _http = _embedder = _anthropic = None
 
 
 app = FastAPI(title="Search Service", lifespan=lifespan)
 
 # Rate limiting. Per-IP throttle on /search keeps one bad actor from
 # burning embedding-service capacity or Supabase row reads. Health
-# checks are intentionally not throttled so Fly's healthchecks never
-# trip the limit.
+# checks are intentionally not throttled so Cloud Run's health checks
+# never trip the limit.
 #
 # get_remote_address pulls the client IP from request.client.host;
-# behind Fly's edge proxy the real IP is in X-Forwarded-For, which
+# behind Cloud Run's proxy the real IP is in X-Forwarded-For, which
 # slowapi's default extractor handles correctly. The 30/minute default
 # is generous for human use (two searches every four seconds is
 # already aggressive typing) and tight enough that a script burst
@@ -182,6 +210,14 @@ class SearchResponse(BaseModel):
     took_ms: int
 
 
+class GuideResponse(BaseModel):
+    repo_id: str
+    full_name: str
+    guide: str          # GitHub-flavored Markdown, fixed five-section format
+    model: str
+    cached: bool        # True if served from repository_guides, False if freshly generated
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -254,4 +290,64 @@ def _hit_to_model(hit: SearchHit) -> HitModel:
         similarity_contribution=hit.similarity_contribution,
         stars_contribution=hit.stars_contribution,
         recency_contribution=hit.recency_contribution,
+    )
+
+
+def _guide_is_stale(cached: CachedGuide, repo: RepoForGuide) -> bool:
+    """A cached guide is stale if the README has been re-fetched since it
+    was generated. When there's nothing to compare (no current README, or a
+    pre-tracking cache), err toward the safe/cheap side."""
+    current = repo.readme_fetched_at
+    cached_at = cached.source_readme_fetched_at
+    if current is None:
+        return False              # no README revision to compare against
+    if cached_at is None:
+        return True               # cache predates README tracking; refresh
+    return current > cached_at
+
+
+@app.get("/guide/{repo_id:path}", response_model=GuideResponse)
+@limiter.limit(GUIDE_RATE_LIMIT)
+async def get_guide(request: Request, repo_id: str) -> GuideResponse:
+    """Return a short "how do I use this?" guide for one repo.
+
+    Served from the `repository_guides` cache when present and fresh;
+    otherwise generated once (Claude Haiku 4.5), stored, and returned.
+    See ADR 0016. Requires ANTHROPIC_API_KEY on a cache miss.
+    """
+    if _pool is None:
+        raise HTTPException(503, "service not ready")
+
+    repo = await fetch_repo_for_guide(_pool, repo_id)
+    if repo is None:
+        raise HTTPException(404, "repository not found")
+
+    cached = await get_cached_guide(_pool, repo_id)
+    if cached is not None and not _guide_is_stale(cached, repo):
+        return GuideResponse(
+            repo_id=repo.repo_id,
+            full_name=repo.full_name,
+            guide=cached.guide,
+            model=cached.model_name,
+            cached=True,
+        )
+
+    if _anthropic is None:
+        raise HTTPException(
+            503, "usage guides are not configured (ANTHROPIC_API_KEY unset)"
+        )
+
+    try:
+        guide = await generate_guide(_anthropic, repo)
+    except GuideGenerationError as exc:
+        logger.warning("Guide generation failed for %s: %s", repo_id, exc)
+        raise HTTPException(502, f"guide generation error: {exc}") from exc
+
+    await upsert_guide(_pool, repo_id, guide, GUIDE_MODEL, repo.readme_fetched_at)
+    return GuideResponse(
+        repo_id=repo.repo_id,
+        full_name=repo.full_name,
+        guide=guide,
+        model=GUIDE_MODEL,
+        cached=False,
     )

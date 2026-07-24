@@ -259,3 +259,103 @@ async def search(
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Usage guides (see ADR 0016)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RepoForGuide:
+    """The fields the guide generator needs about one repo."""
+    repo_id: str
+    full_name: str
+    description: Optional[str]
+    url: str
+    primary_language: Optional[str]
+    topics: List[str]
+    readme: Optional[str]
+    readme_fetched_at: object  # datetime or None
+
+
+@dataclass(frozen=True)
+class CachedGuide:
+    guide: str
+    model_name: str
+    source_readme_fetched_at: object  # datetime or None
+
+
+_FETCH_REPO_FOR_GUIDE_SQL = """
+SELECT id, full_name, description, url, primary_language, topics,
+       readme, readme_fetched_at
+FROM repositories
+WHERE id = $1
+"""
+
+
+async def fetch_repo_for_guide(
+    pool: asyncpg.Pool, repo_id: str
+) -> Optional[RepoForGuide]:
+    """Return the repo's display fields + README, or None if it doesn't exist."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_FETCH_REPO_FOR_GUIDE_SQL, repo_id)
+    if row is None:
+        return None
+    return RepoForGuide(
+        repo_id=row["id"],
+        full_name=row["full_name"],
+        description=row["description"],
+        url=row["url"],
+        primary_language=row["primary_language"],
+        topics=list(row["topics"]) if row["topics"] else [],
+        readme=row["readme"],
+        readme_fetched_at=row["readme_fetched_at"],
+    )
+
+
+_GET_GUIDE_SQL = """
+SELECT guide, model_name, source_readme_fetched_at
+FROM repository_guides
+WHERE repo_id = $1
+"""
+
+
+async def get_cached_guide(
+    pool: asyncpg.Pool, repo_id: str
+) -> Optional[CachedGuide]:
+    """Return the cached guide for ``repo_id``, or None on a cache miss."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_GET_GUIDE_SQL, repo_id)
+    if row is None:
+        return None
+    return CachedGuide(
+        guide=row["guide"],
+        model_name=row["model_name"],
+        source_readme_fetched_at=row["source_readme_fetched_at"],
+    )
+
+
+_UPSERT_GUIDE_SQL = """
+INSERT INTO repository_guides
+    (repo_id, guide, model_name, source_readme_fetched_at, generated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (repo_id) DO UPDATE SET
+    guide                    = EXCLUDED.guide,
+    model_name               = EXCLUDED.model_name,
+    source_readme_fetched_at = EXCLUDED.source_readme_fetched_at,
+    generated_at             = NOW()
+"""
+
+
+async def upsert_guide(
+    pool: asyncpg.Pool,
+    repo_id: str,
+    guide: str,
+    model_name: str,
+    source_readme_fetched_at: object,
+) -> None:
+    """Store (or replace) the cached guide for ``repo_id``."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            _UPSERT_GUIDE_SQL, repo_id, guide, model_name, source_readme_fetched_at
+        )

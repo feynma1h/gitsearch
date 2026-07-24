@@ -232,6 +232,49 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 
+  /* "How do I use this?" usage-guide disclosure (provisional styling). */
+  .guide {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--fg-faint);
+  }
+  .guide summary {
+    cursor: pointer; user-select: none;
+    list-style: none;
+  }
+  .guide summary::-webkit-details-marker { display: none; }
+  .guide summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform 0.15s ease;
+  }
+  .guide[open] summary::before { transform: rotate(90deg); }
+  .guide summary:hover { color: var(--fg-muted); }
+  .guide-body {
+    margin-top: 8px;
+    padding: 12px 14px;
+    background: var(--bg-subtle);
+    border-radius: 6px;
+    color: var(--fg);
+    font-size: 14px;
+  }
+  .guide-body h4 {
+    margin: 12px 0 4px; font-size: 13px; font-weight: 600; color: var(--fg);
+  }
+  .guide-body h4:first-child { margin-top: 0; }
+  .guide-body p { margin: 4px 0; }
+  .guide-body ul { margin: 4px 0; padding-left: 20px; }
+  .guide-body li { margin: 2px 0; }
+  .guide-body pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; overflow-x: auto; margin: 6px 0;
+  }
+  .guide-body code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  .guide-body pre code { font-size: 12px; }
+
   /* Skeleton loading state */
   .skeleton-list { margin-top: 16px; list-style: none; padding: 0; }
   .skeleton {
@@ -346,10 +389,13 @@
 
 <script>
   /* Configuration:
-   *   - SEARCH_URL: the deployed search service. The localhost fallback
+   *   - API_BASE: the deployed search service. The localhost fallback
    *     supports running the file from `python -m http.server` during dev.
+   *   - SEARCH_URL / GUIDE_URL: the two endpoints we call.
    */
-  const SEARCH_URL = (window.GITSEARCH_API_URL || "https://gitsearch-search-148185858207.asia-southeast1.run.app") + "/search";
+  const API_BASE = window.GITSEARCH_API_URL || "https://gitsearch-search-148185858207.asia-southeast1.run.app";
+  const SEARCH_URL = API_BASE + "/search";
+  const GUIDE_URL = repoId => `${API_BASE}/guide/${encodeURIComponent(repoId)}`;
 
   const $ = id => document.getElementById(id);
   const form = $("search-form");
@@ -490,9 +536,91 @@
         <div class="result-meta">${meta}</div>
         ${topicsHtml ? `<div class="topics">${topicsHtml}</div>` : ""}
         ${renderWhy(hit)}
+        ${renderGuide()}
       </div>
     `;
+
+    // Lazily load the usage guide the first time the disclosure is opened.
+    const guideEl = li.querySelector("details.guide");
+    if (guideEl) {
+      guideEl.addEventListener("toggle", () => {
+        if (guideEl.open && !guideEl.dataset.loaded) loadGuide(guideEl, hit.repo_id);
+      });
+    }
     return li;
+  }
+
+  /* The "how do I use this?" disclosure. Empty until first opened; the guide
+   * is fetched from /guide/{repo_id} on demand (generated once server-side,
+   * then cached). Deliberately minimal — the visual design is handled
+   * separately. */
+  function renderGuide() {
+    return `
+      <details class="guide">
+        <summary>how do I use this?</summary>
+        <div class="guide-body">Open to load a quick start guide.</div>
+      </details>
+    `;
+  }
+
+  async function loadGuide(el, repoId) {
+    el.dataset.loaded = "1";
+    const body = el.querySelector(".guide-body");
+    body.textContent = "Generating a quick start guide…";
+    try {
+      const resp = await fetch(GUIDE_URL(repoId));
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      body.innerHTML = renderMarkdown(data.guide || "");
+    } catch (err) {
+      el.dataset.loaded = "";   // allow a retry on re-open
+      body.textContent = `Couldn't load the guide (${err.message}).`;
+    }
+  }
+
+  /* Minimal Markdown renderer for the fixed guide format: `## headings`,
+   * fenced ```code blocks```, `- bullet` lists, `inline code`, and
+   * paragraphs. Not a general Markdown parser — just enough for the guide,
+   * and everything is HTML-escaped. */
+  function renderMarkdown(md) {
+    const lines = md.replace(/\r\n/g, "\n").split("\n");
+    const out = [];
+    let i = 0;
+    let listOpen = false;
+    const closeList = () => { if (listOpen) { out.push("</ul>"); listOpen = false; } };
+
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.startsWith("```")) {                       // fenced code block
+        closeList();
+        const buf = [];
+        i++;
+        while (i < lines.length && !lines[i].startsWith("```")) buf.push(lines[i++]);
+        i++;                                              // skip closing fence
+        out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);
+        continue;
+      }
+      if (/^#{1,6}\s/.test(line)) {                        // heading -> h4
+        closeList();
+        out.push(`<h4>${inlineMd(line.replace(/^#{1,6}\s+/, ""))}</h4>`);
+      } else if (/^\s*[-*]\s+/.test(line)) {               // bullet
+        if (!listOpen) { out.push("<ul>"); listOpen = true; }
+        out.push(`<li>${inlineMd(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
+      } else if (line.trim() === "") {                     // blank line
+        closeList();
+      } else {                                             // paragraph text
+        closeList();
+        out.push(`<p>${inlineMd(line)}</p>`);
+      }
+      i++;
+    }
+    closeList();
+    return out.join("");
+  }
+
+  // Escape, then re-introduce inline `code` spans.
+  function inlineMd(text) {
+    return esc(text).replace(/`([^`]+)`/g, "<code>$1</code>");
   }
 
   /* The "why this rank?" disclosure.

@@ -15,6 +15,7 @@ cap when filtering by `stars:>=N` for reasonable N.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List
 
 
@@ -31,8 +32,13 @@ def generate_shards(min_stars: int = 200, max_stars: int = 500_000) -> List[str]
         A list of query fragments like ``["stars:200..200", "stars:201..201", ...]``
         with no overlapping boundaries.
     """
-    if min_stars < 0:
-        raise ValueError("min_stars must be non-negative")
+    if min_stars < 200:
+        raise ValueError(
+            "min_stars must be >= 200; lower ranges exceed GitHub's "
+            "1000-results-per-query cap"
+        )
+    # NOTE: max_stars is currently unimplemented and reserved for future
+    # bounded-top-shard support. The final shard remains open-ended.
     if max_stars <= min_stars:
         raise ValueError("max_stars must be greater than min_stars")
 
@@ -61,3 +67,19 @@ def generate_shards(min_stars: int = 200, max_stars: int = 500_000) -> List[str]
     shards.append(f"stars:>={bands[-1][1]}")
 
     return shards
+
+
+def apply_pushed_since(shards: List[str], since: datetime) -> List[str]:
+    """Narrow each shard query to repos pushed on or after ``since``.
+
+    Appends GitHub's ``pushed:>=YYYY-MM-DD`` qualifier — ANDed with the
+    existing ``stars:A..B`` fragment — so an incremental crawl only pulls
+    repos with recent commits instead of re-scanning the whole corpus.
+
+    Day granularity is deliberate: it re-includes anything pushed on the
+    watermark date, a harmless overlap since ``db.insert_batch`` upserts
+    by id. See ADR 0015 for why ``pushed:`` (not ``created:``) is the
+    signal and how star-count drift is handled separately.
+    """
+    date = since.date().isoformat()
+    return [f"{shard} pushed:>={date}" for shard in shards]

@@ -15,14 +15,15 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
 
 from .config import DEFAULT_METADATA_WORKERS, DEFAULT_MIN_STARS
-from .db import create_pool
+from .db import create_pool, get_last_crawl_at, set_last_crawl_at
 from .rate_limiter import RateLimiter
-from .shard_generator import generate_shards
+from .shard_generator import apply_pushed_since, generate_shards
 from .worker import CrawlStats, worker
 
 logger = logging.getLogger(__name__)
@@ -45,10 +46,29 @@ def _parse_args() -> argparse.Namespace:
         help="Optional wall-clock limit; workers exit cleanly past this.",
     )
     parser.add_argument(
+        "--incremental", action="store_true",
+        help="Only crawl repos pushed since the last successful crawl "
+             "(watermark read from crawl_state). Falls back to a full crawl "
+             "if no watermark exists yet. See ADR 0015.",
+    )
+    parser.add_argument(
+        "--since", type=str, default=None,
+        help="Override the incremental watermark with an explicit ISO 8601 "
+             "date/time (e.g. 2026-07-01). Implies incremental behaviour.",
+    )
+    parser.add_argument(
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     return parser.parse_args()
+
+
+def _parse_since(value: str) -> datetime:
+    """Parse an ISO 8601 date/datetime into a timezone-aware datetime (UTC)."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _setup_logging(level: str) -> None:
@@ -64,7 +84,36 @@ async def _run(args: argparse.Namespace) -> None:
     if not token:
         raise SystemExit("GITHUB_TOKEN environment variable is required.")
 
+    # Capture the run start time up front. On successful completion this
+    # becomes the new watermark, so the next incremental run picks up
+    # anything pushed while this run was in flight (ADR 0015).
+    run_started_at = datetime.now(timezone.utc)
+    pool = await create_pool()
+
+    # Resolve the incremental watermark, if any.
+    since: Optional[datetime] = None
+    if args.since:
+        since = _parse_since(args.since)
+    elif args.incremental:
+        try:
+            since = await get_last_crawl_at(pool)
+        except Exception as exc:
+            logger.warning("Could not read crawl watermark (%s); full crawl.", exc)
+        if since is None:
+            logger.warning(
+                "Incremental crawl requested but no watermark found; running "
+                "a full crawl to establish one."
+            )
+
     shards = generate_shards(min_stars=args.min_stars)
+    if since is not None:
+        shards = apply_pushed_since(shards, since)
+        logger.info(
+            "Incremental crawl: only repos pushed since %s.", since.date().isoformat()
+        )
+    else:
+        logger.info("Full crawl (no incremental filter).")
+
     queue: asyncio.Queue = asyncio.Queue()
     for shard in shards:
         queue.put_nowait(shard)
@@ -73,7 +122,6 @@ async def _run(args: argparse.Namespace) -> None:
 
     stats = CrawlStats(shards_total=len(shards))
     limiter = RateLimiter(name="graphql")
-    pool = await create_pool()
 
     deadline: Optional[float] = None
     if args.deadline_seconds is not None:
@@ -107,20 +155,35 @@ async def _run(args: argparse.Namespace) -> None:
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            if stop_task in done:
-                logger.warning("Shutdown signal received; cancelling workers.")
-                for w in workers:
-                    w.cancel()
-                results = await asyncio.gather(*workers, return_exceptions=True)
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-                        logger.error("[w%d] crashed with %s: %s", i, type(result).__name__, result)
-            else:
-                stop_task.cancel()
-                results = await asyncio.gather(*workers, return_exceptions=True)
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-                        logger.error("[w%d] crashed with %s: %s", i, type(result).__name__, result)
+        interrupted = stop_task in done
+        if interrupted:
+            logger.warning("Shutdown signal received; cancelling workers.")
+            for w in workers:
+                w.cancel()
+        else:
+            stop_task.cancel()
+
+        results = await asyncio.gather(*workers, return_exceptions=True)
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                logger.error(
+                    "[w%d] crashed with %s: %s",
+                    i,
+                    type(result).__name__,
+                    result,
+                )
+
+        # Advance the watermark only on a clean, uninterrupted finish, so a
+        # run killed mid-way is retried from the same point next time. A full
+        # crawl also sets it, which is how the first run bootstraps the
+        # watermark that later incremental runs read (ADR 0015).
+        if not interrupted:
+            try:
+                await set_last_crawl_at(pool, run_started_at)
+                logger.info("Crawl watermark set to %s.", run_started_at.isoformat())
+            except Exception as exc:
+                logger.warning("Failed to update crawl watermark: %s", exc)
     finally:
         await pool.close()
 

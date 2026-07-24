@@ -14,8 +14,9 @@ from __future__ import annotations
 
 # --- Metadata crawl --------------------------------------------------------
 
-# Default lower bound on stars. Captures roughly the top 100K repos as of
-# 2026; see ADR 0003 for the rationale and what would change this.
+# Default lower bound on stars. At ~200 stars the population is roughly
+# 280K repos as of 2026 (it has grown well past the original ~100K
+# target); see ADR 0003 for the rationale and what would change this.
 DEFAULT_MIN_STARS: int = 200
 
 # Concurrent workers in the metadata crawl.
@@ -28,8 +29,8 @@ DEFAULT_MIN_STARS: int = 200
 #
 # Earlier versions of this code defaulted to 15 workers and tripped the
 # secondary limit catastrophically: most shards aborted within minutes.
-# Dropping to 5 trades crawl wall time (~12 min vs ~4 min) for the
-# crawl actually completing. See ADR 0001.
+# Dropping to 5 trades some crawl wall time (~25 min for the full ~280K
+# corpus) for the crawl actually completing where 15 aborts. See ADR 0001.
 DEFAULT_METADATA_WORKERS: int = 5
 
 

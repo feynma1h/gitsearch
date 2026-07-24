@@ -148,3 +148,40 @@ async def update_readme(
     """
     async with pool.acquire() as conn:
         await conn.execute(_UPDATE_README_SQL, repo_id, content, status)
+
+
+# ---------------------------------------------------------------------------
+# Incremental-crawl watermark (see ADR 0015)
+# ---------------------------------------------------------------------------
+
+_GET_LAST_CRAWL_SQL = "SELECT last_metadata_crawl_at FROM crawl_state WHERE id = 1"
+
+_SET_LAST_CRAWL_SQL = """
+INSERT INTO crawl_state (id, last_metadata_crawl_at, updated_at)
+VALUES (1, $1, NOW())
+ON CONFLICT (id) DO UPDATE SET
+    last_metadata_crawl_at = EXCLUDED.last_metadata_crawl_at,
+    updated_at             = NOW()
+"""
+
+
+async def get_last_crawl_at(pool: asyncpg.Pool) -> Optional[datetime]:
+    """Return the start time of the last successful metadata crawl, or None.
+
+    None means no full crawl has completed yet — the caller should fall back
+    to a full crawl rather than an incremental one.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_GET_LAST_CRAWL_SQL)
+    return row["last_metadata_crawl_at"] if row else None
+
+
+async def set_last_crawl_at(pool: asyncpg.Pool, ts: datetime) -> None:
+    """Record ``ts`` as the watermark for the next incremental crawl.
+
+    Pass the *start* time of the run that just completed, not its end time,
+    so the next run re-includes anything pushed while this one was running.
+    Re-includes are harmless — ``insert_batch`` upserts by id.
+    """
+    async with pool.acquire() as conn:
+        await conn.execute(_SET_LAST_CRAWL_SQL, ts)

@@ -14,10 +14,11 @@ silently loses ~90% of the repos in that range.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 import pytest
 
-from src.shard_generator import generate_shards
+from src.shard_generator import apply_pushed_since, generate_shards
 
 _RANGE_RE = re.compile(r"^stars:(\d+)\.\.(\d+)$")
 _OPEN_RE = re.compile(r"^stars:>=(\d+)$")
@@ -141,3 +142,34 @@ def test_total_shard_count_is_in_expected_range():
     (~568 range shards + 1 open). Catches accidental band-table edits."""
     shards = generate_shards()
     assert 565 <= len(shards) <= 575, f"got {len(shards)} shards, expected ~569"
+
+
+# ---------------------------------------------------------------------------
+# Incremental crawl: pushed:>= qualifier (ADR 0015).
+# ---------------------------------------------------------------------------
+
+def test_apply_pushed_since_appends_date_qualifier():
+    """Each shard should gain a ` pushed:>=YYYY-MM-DD` qualifier ANDed onto
+    the existing stars fragment, at day granularity."""
+    since = datetime(2026, 7, 1, 13, 45, 0, tzinfo=timezone.utc)
+    out = apply_pushed_since(["stars:200..200", "stars:>=50000"], since)
+    assert out == [
+        "stars:200..200 pushed:>=2026-07-01",
+        "stars:>=50000 pushed:>=2026-07-01",
+    ]
+
+
+def test_apply_pushed_since_preserves_shard_count():
+    """Narrowing must not add or drop shards."""
+    shards = generate_shards()
+    since = datetime(2026, 1, 15, tzinfo=timezone.utc)
+    assert len(apply_pushed_since(shards, since)) == len(shards)
+
+
+def test_apply_pushed_since_uses_day_granularity():
+    """The qualifier is the calendar date only — the time component is
+    intentionally dropped so a run re-includes (harmlessly) the watermark
+    day."""
+    since = datetime(2026, 3, 9, 23, 59, 59, tzinfo=timezone.utc)
+    (out,) = apply_pushed_since(["stars:1000..1049"], since)
+    assert out.endswith("pushed:>=2026-03-09")

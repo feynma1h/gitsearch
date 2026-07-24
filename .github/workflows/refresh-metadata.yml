@@ -2,8 +2,14 @@ name: Refresh Metadata
 
 on:
   schedule:
-    - cron: "0 3 * * 0"  # Sundays 03:00 UTC
+    - cron: "0 3 * * 0"  # weekly incremental refresh (Sundays 03:00 UTC)
+    - cron: "0 4 1 * *"  # monthly full re-baseline (1st of month, 04:00 UTC)
   workflow_dispatch:
+    inputs:
+      full:
+        description: "Force a full re-crawl (re-baselines star counts)"
+        type: boolean
+        default: false
 
 concurrency:
   group: refresh-pipeline
@@ -27,6 +33,18 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run metadata crawl
         working-directory: crawler
-        run: python -m src.main --workers 2 --min-stars 200
+        # Weekly runs are incremental (only repos pushed since the last
+        # crawl); the monthly cron and a manual `full=true` dispatch do a
+        # full re-baseline, which also refreshes star counts on repos that
+        # changed rank without a new push. See ADR 0015.
+        run: |
+          if [ "${{ github.event.inputs.full }}" = "true" ] || \
+             [ "${{ github.event.schedule }}" = "0 4 1 * *" ]; then
+            echo "Running FULL metadata crawl (re-baseline)."
+            python -m src.main --workers 2 --min-stars 200
+          else
+            echo "Running INCREMENTAL metadata crawl."
+            python -m src.main --workers 2 --min-stars 200 --incremental
+          fi
       - name: Report progress
         run: python scripts/check_progress.py --stage report

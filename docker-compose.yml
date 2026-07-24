@@ -13,7 +13,7 @@
 #
 #   cp .env.example .env       # then fill in GITHUB_TOKEN
 #   docker compose up -d postgres
-#   make migrate               # applies sql/0001..0003
+#   make migrate               # applies sql/0001..0006
 #   docker compose up -d embedding-service search-service
 #   make crawl                 # populate repositories
 #   make index                 # populate repository_embeddings
@@ -67,10 +67,12 @@ services:
     restart: unless-stopped
     environment:
       # Reach Postgres and embedding via the compose network. The
-      # search service runs on a separate VM in production; these
-      # vars get overridden there.
+      # search service runs on Cloud Run in production; these vars get
+      # overridden there.
       DATABASE_URL: ${DATABASE_URL}
       EMBEDDING_SERVICE_URL: http://embedding-service:8001
+      # Optional — enables the /guide usage-guide endpoint. Unset = disabled.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "${SEARCH_PORT:-8002}:8002"
     depends_on:

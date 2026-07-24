@@ -49,20 +49,38 @@ migrate: ## Apply all SQL migrations in order (requires psql on host).
 	$(PSQL) "$(DATABASE_URL)" -f sql/0001_initial_schema.sql
 	$(PSQL) "$(DATABASE_URL)" -f sql/0002_readme_columns.sql
 	$(PSQL) "$(DATABASE_URL)" -f sql/0003_repository_embeddings.sql
+	$(PSQL) "$(DATABASE_URL)" -f sql/0004_refresh_watermarks.sql
+	$(PSQL) "$(DATABASE_URL)" -f sql/0005_crawl_state.sql
+	$(PSQL) "$(DATABASE_URL)" -f sql/0006_repository_guides.sql
 
 .PHONY: migrate-compose
 migrate-compose: ## Apply migrations via the postgres container (no host psql needed).
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0001_initial_schema.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0002_readme_columns.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0003_repository_embeddings.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0004_refresh_watermarks.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0005_crawl_state.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0006_repository_guides.sql
+
+.PHONY: reset-db
+reset-db: ## DESTRUCTIVE: drop every project table, then re-apply migrations. Wipes the corpus.
+	@echo "This will DROP ALL DATA in $(DATABASE_URL) and re-create empty tables."
+	@echo "Press Ctrl-C within 5s to abort."
+	@sleep 5
+	$(PSQL) "$(DATABASE_URL)" -c "DROP TABLE IF EXISTS repository_guides, repository_embeddings, crawl_state, refresh_watermarks, repositories CASCADE;"
+	$(MAKE) migrate
 
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
 .PHONY: crawl
-crawl: ## Run the metadata crawl (~4 min for 100K repos).
+crawl: ## Run a full metadata crawl (~25 min for ~280K repos). Use once to populate.
 	cd crawler && $(PYTHON) -m src.main
+
+.PHONY: crawl-incremental
+crawl-incremental: ## Refresh only repos pushed since the last crawl (see ADR 0015).
+	cd crawler && $(PYTHON) -m src.main --incremental
 
 .PHONY: readmes
 readmes: ## Fetch READMEs for the top-N repos. Resumable. Defaults to top 20K.

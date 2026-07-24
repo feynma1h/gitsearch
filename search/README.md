@@ -82,6 +82,7 @@ pip install -r requirements.txt
 # 2. Env
 export DATABASE_URL=postgresql://...
 export EMBEDDING_SERVICE_URL=http://localhost:8001  # default
+export ANTHROPIC_API_KEY=sk-ant-...                 # optional; enables /guide
 
 # 3. Run
 uvicorn service.server:app --host 0.0.0.0 --port 8002
@@ -115,6 +116,18 @@ POST /search   {
 Each hit returns: `repo_id`, `full_name`, `description`, `url`,
 `primary_language`, `topics`, `stars`, `pushed_at`, `similarity`
 (0..1, raw cosine), and `hybrid_score` (the actual ranking key).
+
+```
+GET  /guide/{repo_id}
+     → { "repo_id": "...", "full_name": "...",
+         "guide": "## What it is\n...",   # GFM, fixed five-section format
+         "model": "...", "cached": true|false }
+```
+
+Returns a short "how do I use this?" guide for one repo, generated once
+from its README and cached (see [ADR 0016](../docs/decisions/0016-llm-usage-guide.md)).
+Requires `ANTHROPIC_API_KEY`; without it the endpoint returns 503 and
+search is unaffected.
 
 ### Examples
 
@@ -157,6 +170,11 @@ JOIN on `model_name` matches nothing and you get zero results — silent.
 A startup health-probe against the embedding service that asserts model
 parity is a reasonable next addition.
 
+Usage guides (`/guide`) add one more knob: `ANTHROPIC_API_KEY` in the
+environment, plus the `GUIDE_*` defaults in `config.py` (model, output
+length, README truncation, and rate limit). See
+[ADR 0016](../docs/decisions/0016-llm-usage-guide.md).
+
 ## Tests
 
 ```bash
@@ -176,6 +194,7 @@ ADRs, continuing the project's contiguous numbering:
 
 - [ADR 0012 — Search as a separate service](../docs/decisions/0012-search-as-a-separate-service.md)
 - [ADR 0013 — Hybrid scoring formula and over-fetch + re-rank](../docs/decisions/0013-hybrid-scoring-formula.md)
+- [ADR 0016 — LLM-generated repository usage guides](../docs/decisions/0016-llm-usage-guide.md)
 
 The most consequential file in the search service for ranking quality
 is [`service/ranking.py`](service/ranking.py) — changes there directly
@@ -194,10 +213,11 @@ Postgres and must stay in sync.
   and search every time. An in-memory LRU on the embedding step would
   cut latency on hot queries by ~80% (the embed step dominates). Held
   off as feature creep until measured QPS justifies it.
-- **No evaluation harness yet.** Weight tuning currently is vibes.
-  See [`eval/README.md`](eval/README.md) for the proposed approach;
-  the harness is a recommended next addition before any further weight
-  tuning.
+- **Eval harness not wired into CI.** The offline eval harness
+  ([`eval/`](eval/)) measures Recall@K / NDCG@K against a labelled query
+  set, so weight tuning is data-driven — but it runs on demand
+  (`make eval`), not automatically on PRs. Wiring it into CI is the next
+  step once ranking quality starts gating review.
 - **Single embedding model.** ADR 0006 makes A/B testing models
   trivial at the storage layer, but the search service today only
   reads embeddings for one model at a time. A `?model=` request

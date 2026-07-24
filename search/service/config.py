@@ -77,3 +77,26 @@ EMBEDDING_RETRY_BACKOFF_SECONDS: float = 0.2
 
 DEFAULT_LIMIT: int = 10
 MAX_LIMIT: int = 100
+
+
+# ---------------------------------------------------------------------------
+# Usage guides (ADR 0016)
+# ---------------------------------------------------------------------------
+
+# The "how do I use this?" guide is generated once per repo, lazily, from the
+# repo's README and cached in `repository_guides`. Haiku is deliberately
+# chosen over a larger model: the task is short-form summarisation of text we
+# already have, so a small, cheap, fast model is the right fit (~$0.0065 per
+# repo, paid only on the first click). Requires ANTHROPIC_API_KEY on the
+# search service; if unset, the /guide endpoint is disabled.
+GUIDE_MODEL: str = "claude-haiku-4-5"
+
+# Short output: five terse sections. Keeps latency and cost down.
+GUIDE_MAX_TOKENS: int = 800
+
+# READMEs can be huge; the useful install/run material is almost always near
+# the top. Truncate to bound input tokens.
+GUIDE_README_CHAR_LIMIT: int = 12_000
+
+# Each cache miss costs an LLM call, so throttle harder than /search.
+GUIDE_RATE_LIMIT: str = "10/minute"

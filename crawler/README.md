@@ -4,7 +4,7 @@ Async crawler that fetches GitHub repository metadata via the GraphQL Search
 API and persists it to Postgres. Designed as the ingestion layer for a
 larger semantic-search project.
 
-Crawls roughly **100K repositories in ~4 minutes** on a single GitHub token,
+Crawls roughly **280K repositories in ~25 minutes** on a single GitHub token,
 limited primarily by the 5000 points/hour GraphQL budget.
 
 ## How it works
@@ -16,7 +16,7 @@ queries and processing them concurrently.
 
 ```
                        ┌────────────────────┐
-                       │  shard generator   │  stars:50..59, stars:60..69, ...
+                       │  shard generator   │  stars:200..200, stars:201..201, ...
                        └─────────┬──────────┘
                                  │
                        ┌─────────▼──────────┐
@@ -65,8 +65,8 @@ variable widths:
 | 50,000+          | open-ended  |
 
 GitHub's `stars:A..B` syntax is **inclusive on both ends**, so adjacent
-shards must not share endpoints — the generator emits `stars:50..59`,
-`stars:60..69`, etc., not `stars:50..60`, `stars:60..70`.
+shards must not share endpoints — the generator emits `stars:1000..1049`,
+`stars:1050..1099`, etc., not `stars:1000..1050`, `stars:1050..1100`.
 
 ## Setup
 
@@ -83,7 +83,7 @@ pip install -r requirements.txt
 cp ../.env.example ../.env
 # Fill in GITHUB_TOKEN and DATABASE_URL.
 
-# 4. Run the metadata crawl (~4 minutes for 100K repos).
+# 4. Run the metadata crawl (~25 minutes for 280K repos).
 set -a; source .env; set +a
 python -m src.main
 
@@ -99,8 +99,8 @@ python -m src.main [--workers N] [--min-stars N] [--deadline-seconds N] [--log-l
 
 | Flag                  | Default | Description                                       |
 | --------------------- | ------- | ------------------------------------------------- |
-| `--workers`           | 15      | Concurrent workers. 15 is a sweet spot for one token. |
-| `--min-stars`         | 200     | Lower bound on stars. ~200 yields the target ~100K repos; see [ADR 0003](../docs/decisions/0003-min-stars-threshold.md). |
+| `--workers`           | 5       | Concurrent workers. 5 is a safe default for one token; higher trips GitHub's secondary rate limit (see [ADR 0001](../docs/decisions/0001-sharded-star-range-crawling.md)). |
+| `--min-stars`         | 200     | Lower bound on stars. At ~200 the population is ~280K repos today (it has grown well past the original ~100K target); see [ADR 0003](../docs/decisions/0003-min-stars-threshold.md). |
 | `--deadline-seconds`  | none    | Optional wall-clock cap; workers exit cleanly past this. |
 | `--log-level`         | INFO    | DEBUG / INFO / WARNING / ERROR                    |
 
@@ -121,8 +121,9 @@ python -m src.readme_pass [--workers N] [--top-n N] [--deadline-seconds N] [--lo
 | `--deadline-seconds`  | none    | Optional wall-clock cap.                          |
 | `--log-level`         | INFO    | DEBUG / INFO / WARNING / ERROR                    |
 
-A single token can fetch ~5000 READMEs/hour, so 20K takes ~4 hours and 100K
-takes ~20 hours. Crashes are safe — restart picks up where it left off.
+A single token can fetch ~5000 READMEs/hour, so the top 20K takes ~4 hours and
+the full ~280K corpus takes ~16 hours. Crashes are safe — restart picks up where
+it left off.
 
 ## Schema
 
@@ -157,9 +158,9 @@ one rather than rewriting it.
 ## Known limitations
 
 - **Single-token only.** Multi-token rotation would let us push past the
-  5000 points/hour ceiling, but isn't needed for the 100K-repo target on
-  the metadata crawl. The README pass is more rate-limit-bound — raising
-  to 100K coverage there would benefit from rotation.
+  5000 points/hour ceiling, but isn't needed for the ~280K-repo metadata
+  crawl. The README pass is more rate-limit-bound — full README coverage of
+  the whole corpus would benefit from rotation.
 - **No resume for the metadata crawl.** A crash mid-crawl re-processes
   shards from scratch on the next run. The `ON CONFLICT DO UPDATE` makes
   this safe but wasteful. The README pass *does* support resume.

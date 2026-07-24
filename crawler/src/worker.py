@@ -73,9 +73,10 @@ async def worker(
     # Per-worker startup stagger. All workers are created in a tight
     # loop in main.py, so without this they all hit GitHub within
     # milliseconds — exactly the burst pattern that trips the secondary
-    # rate limit on first contact, especially from Actions runners
-    # whose egress IPs are flagged more aggressively. 1.5s spacing
-    # keeps the burst signal below GitHub's detection threshold.
+    # rate limit on first contact, especially from CI runners whose
+    # egress IPs are flagged more aggressively. Spacing each worker's
+    # first request 30s apart keeps the burst signal below GitHub's
+    # detection threshold.
     await asyncio.sleep(worker_id * 30.0)
 
     while True:
