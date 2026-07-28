@@ -27,6 +27,16 @@ from pydantic import BaseModel, Field
 
 from .model import EmbeddingModel
 
+# uvicorn only configures handlers for its own loggers; the root logger
+# gets none, so app records (the "Service ready" line) would otherwise
+# vanish — on Cloud Run they'd never reach Cloud Logging. basicConfig
+# routes them to stderr; it is a no-op if the root logger is already
+# configured.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+)
+
 logger = logging.getLogger(__name__)
 
 MODEL_NAME = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")

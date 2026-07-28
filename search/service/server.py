@@ -64,6 +64,16 @@ from .ranking import (
     ScoringWeights,
 )
 
+# uvicorn only configures handlers for its own loggers; the root logger
+# gets none, so app records (the startup line, guide warnings) would
+# otherwise vanish — on Cloud Run they'd never reach Cloud Logging.
+# basicConfig routes them to stderr; it is a no-op if the root logger
+# is already configured.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+)
+
 logger = logging.getLogger(__name__)
 
 
