@@ -56,6 +56,7 @@ between an ADR and a commit message.
 | 0014 | pipeline  | [Chunked GitHub Actions for corpus refresh](0014-chunked-actions-refresh.md) | accepted |
 | 0015 | crawler   | [Incremental metadata refresh](0015-incremental-metadata-refresh.md) | accepted |
 | 0016 | search    | [LLM-generated repository usage guides](0016-llm-usage-guide.md) | accepted |
+| 0017 | search    | [Agentic full-repo exploration for usage guides](0017-agentic-guide-generation.md) | accepted |
 
 The indexer block (0005–0011) reads as a connected arc: *where the
 model lives* → *where its output goes* → *what model produces it* →

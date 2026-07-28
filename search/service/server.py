@@ -55,6 +55,7 @@ from .db import (
 )
 from .embedding_client import EmbeddingClient, EmbeddingServiceError
 from .guide import GuideGenerationError, generate_guide
+from .repo_browser import RepoBrowser
 from .ranking import (
     DEFAULT_RECENCY_HALF_LIFE_DAYS,
     DEFAULT_SIMILARITY_WEIGHT,
@@ -73,6 +74,9 @@ _embedder: Optional[EmbeddingClient] = None
 # Anthropic client for usage guides. Stays None when ANTHROPIC_API_KEY is
 # unset, which disables the /guide endpoint rather than failing at startup.
 _anthropic: Optional[AsyncAnthropic] = None
+# GitHub token for the guide's repo-exploration tools (ADR 0017). When unset,
+# guides fall back to the README-only path rather than failing.
+_github_token: Optional[str] = None
 
 
 @asynccontextmanager
@@ -83,7 +87,7 @@ async def lifespan(_: FastAPI):
     expensive to create per-request; we hold one of each for the life of
     the process.
     """
-    global _pool, _http, _embedder, _anthropic
+    global _pool, _http, _embedder, _anthropic, _github_token
 
     service_url = os.environ.get(
         "EMBEDDING_SERVICE_URL", DEFAULT_EMBEDDING_SERVICE_URL,
@@ -101,9 +105,19 @@ async def lifespan(_: FastAPI):
             "ANTHROPIC_API_KEY not set; the /guide endpoint is disabled."
         )
 
+    _github_token = os.environ.get("GITHUB_TOKEN") or None
+    if _anthropic and not _github_token:
+        logger.warning(
+            "GITHUB_TOKEN not set; guides use the stored README only "
+            "(no repository exploration)."
+        )
+
+    guides_mode = "off"
+    if _anthropic:
+        guides_mode = "full-repo" if _github_token else "readme-only"
     logger.info(
         "Search service ready; model=%s, embedding service=%s, guides=%s",
-        MODEL_NAME, service_url, "on" if _anthropic else "off",
+        MODEL_NAME, service_url, guides_mode,
     )
 
     yield
@@ -313,7 +327,9 @@ async def get_guide(request: Request, repo_id: str) -> GuideResponse:
 
     Served from the `repository_guides` cache when present and fresh;
     otherwise generated once (Claude Haiku 4.5), stored, and returned.
-    See ADR 0016. Requires ANTHROPIC_API_KEY on a cache miss.
+    With GITHUB_TOKEN set the model explores the live repository while
+    writing (ADR 0017); otherwise it works from the stored README (ADR
+    0016). Requires ANTHROPIC_API_KEY on a cache miss.
     """
     if _pool is None:
         raise HTTPException(503, "service not ready")
@@ -337,8 +353,12 @@ async def get_guide(request: Request, repo_id: str) -> GuideResponse:
             503, "usage guides are not configured (ANTHROPIC_API_KEY unset)"
         )
 
+    browser = None
+    if _github_token is not None and _http is not None:
+        browser = RepoBrowser(_http, repo.full_name, _github_token)
+
     try:
-        guide = await generate_guide(_anthropic, repo)
+        guide = await generate_guide(_anthropic, repo, browser)
     except GuideGenerationError as exc:
         logger.warning("Guide generation failed for %s: %s", repo_id, exc)
         raise HTTPException(502, f"guide generation error: {exc}") from exc

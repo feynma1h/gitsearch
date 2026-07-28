@@ -100,3 +100,13 @@ GUIDE_README_CHAR_LIMIT: int = 12_000
 
 # Each cache miss costs an LLM call, so throttle harder than /search.
 GUIDE_RATE_LIMIT: str = "10/minute"
+
+# --- Full-repo exploration for guides (ADR 0017) ----------------------------
+# When GITHUB_TOKEN is set on the service, the guide model explores the live
+# repository through a bounded tool loop (list_files / read_file) instead of
+# relying on the README alone. These bounds cap the worst case per guide at
+# GUIDE_MAX_TOOL_ROUNDS+1 model calls and a few tens of KB of fetched text;
+# without the token the generator falls back to the README-only path.
+GUIDE_MAX_TOOL_ROUNDS: int = 8       # model<->tool round-trips before the answer is forced
+GUIDE_TREE_MAX_ENTRIES: int = 500    # file paths shown per listing
+GUIDE_FILE_CHAR_LIMIT: int = 20_000  # characters returned per file read

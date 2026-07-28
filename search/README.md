@@ -83,6 +83,7 @@ pip install -r requirements.txt
 export DATABASE_URL=postgresql://...
 export EMBEDDING_SERVICE_URL=http://localhost:8001  # default
 export ANTHROPIC_API_KEY=sk-ant-...                 # optional; enables /guide
+export GITHUB_TOKEN=github_pat_...                  # optional; /guide explores the live repo
 
 # 3. Run
 uvicorn service.server:app --host 0.0.0.0 --port 8002
@@ -125,9 +126,15 @@ GET  /guide/{repo_id}
 ```
 
 Returns a short "how do I use this?" guide for one repo, generated once
-from its README and cached (see [ADR 0016](../docs/decisions/0016-llm-usage-guide.md)).
-Requires `ANTHROPIC_API_KEY`; without it the endpoint returns 503 and
-search is unaffected.
+and cached (see [ADR 0016](../docs/decisions/0016-llm-usage-guide.md)).
+With `GITHUB_TOKEN` set, the model explores the live repository while
+writing — listing the file tree and reading manifests, docs, and examples
+through a bounded tool loop — so install/run steps come from the real
+files, not just the README
+([ADR 0017](../docs/decisions/0017-agentic-guide-generation.md)); without
+the token it falls back to the stored README alone. Requires
+`ANTHROPIC_API_KEY`; without it the endpoint returns 503 and search is
+unaffected.
 
 ### Examples
 
@@ -170,10 +177,13 @@ JOIN on `model_name` matches nothing and you get zero results — silent.
 A startup health-probe against the embedding service that asserts model
 parity is a reasonable next addition.
 
-Usage guides (`/guide`) add one more knob: `ANTHROPIC_API_KEY` in the
-environment, plus the `GUIDE_*` defaults in `config.py` (model, output
-length, README truncation, and rate limit). See
-[ADR 0016](../docs/decisions/0016-llm-usage-guide.md).
+Usage guides (`/guide`) add two more knobs: `ANTHROPIC_API_KEY` (enables
+the endpoint) and `GITHUB_TOKEN` (enables full-repo exploration), plus the
+`GUIDE_*` defaults in `config.py` (model, output length, README
+truncation, rate limit, and the exploration bounds — tool rounds, listing
+size, per-file size). See
+[ADR 0016](../docs/decisions/0016-llm-usage-guide.md) and
+[ADR 0017](../docs/decisions/0017-agentic-guide-generation.md).
 
 ## Tests
 
@@ -195,6 +205,7 @@ ADRs, continuing the project's contiguous numbering:
 - [ADR 0012 — Search as a separate service](../docs/decisions/0012-search-as-a-separate-service.md)
 - [ADR 0013 — Hybrid scoring formula and over-fetch + re-rank](../docs/decisions/0013-hybrid-scoring-formula.md)
 - [ADR 0016 — LLM-generated repository usage guides](../docs/decisions/0016-llm-usage-guide.md)
+- [ADR 0017 — Agentic full-repo exploration for usage guides](../docs/decisions/0017-agentic-guide-generation.md)
 
 The most consequential file in the search service for ranking quality
 is [`service/ranking.py`](service/ranking.py) — changes there directly
