@@ -3,694 +3,985 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gitsearch — semantic search over GitHub</title>
-<meta name="description" content="Find GitHub repos by what they do, not just by name. Semantic search over ~20K repositories with hybrid ranking by relevance, popularity, and recency.">
+<title>gitsearch — find GitHub repos by what they do</title>
+<meta name="description" content="Describe what you need in plain English and gitsearch finds the GitHub repos that do it — searching 250,000 repositories by what they do, with a quick-start guide for every result.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='4' y='24' font-family='Georgia,serif' font-weight='600' font-size='22' fill='%23211C15'%3Eg%3C/text%3E%3Ccircle cx='24' cy='22' r='3' fill='%23B34D28'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..700&display=swap" rel="stylesheet">
 <style>
-  /* Design notes:
-     - Single-column, centered, max-width 720px. Search results read better
-       narrow than wide.
-     - System font stack so it looks native everywhere.
-     - Restrained palette: GitHub blue accent, muted gray chrome.
-     - Mobile-first; same layout works on phones unchanged.
-     - Dark mode via prefers-color-scheme. */
+  /* Design notes (2026-07 redesign, ported from the Claude Design treatment):
+     - Warm paper palette, serif (Newsreader) for headings and the wordmark,
+       system stack for everything else. One webfont, non-italic subset only.
+     - Single column, max 680px. Cards on a soft background.
+     - Plain language on the surface; scoring machinery behind disclosures.
+     - Theme: follows system preference until the user toggles; the choice
+       persists in localStorage. body[data-th] carries the active theme.
+     - Every wait state is designed: cold start (~15s after idle) gets staged
+       messages; first guide generation (~10-20s) narrates what's happening.
+     - No layout shift: the status line has fixed height, skeletons match
+       final card geometry. prefers-reduced-motion disables all animation. */
 
-  :root {
-    --fg: #1f2328;
-    --fg-muted: #59636e;
-    --fg-faint: #848d97;
-    --bg: #ffffff;
-    --bg-subtle: #f6f8fa;
-    --bg-skeleton: #e8edf2;
-    --border: #d1d9e0;
-    --accent: #0969da;
-    --accent-hover: #0550ae;
-    --bar-similarity: #2da44e;
-    --bar-stars: #d4a72c;
-    --bar-recency: #8250df;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --fg: #e6edf3;
-      --fg-muted: #9198a1;
-      --fg-faint: #6e7681;
-      --bg: #0d1117;
-      --bg-subtle: #151b23;
-      --bg-skeleton: #21262d;
-      --border: #3d444d;
-      --accent: #4493f8;
-      --accent-hover: #6ca4f8;
-      --bar-similarity: #3fb950;
-      --bar-stars: #d29922;
-      --bar-recency: #a371f7;
-    }
-  }
-  * { box-sizing: border-box; }
+  :root { color-scheme: light dark; }
   body {
-    margin: 0;
-    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          "Helvetica Neue", Arial, sans-serif;
-    color: var(--fg);
-    background: var(--bg);
+    --bg:#FAF7F1; --card:#FFFFFF; --ink:#211C15; --ink2:#5D5446; --ink3:#766B59;
+    --line:#E3DACB; --line2:#EFE8DB; --accent:#9A5B33; --accent-strong:#B34D28;
+    --chip:#F3EDE2; --guide-bg:#FBF7EE; --code-bg:#26201A; --code-ink:#EDE5D6;
+    --seg1:#B65C34; --seg2:#C99A3A; --seg3:#7B8B5E; --err:#A3422E;
+    --shadow:rgba(80,60,30,.07);
   }
-  .container { max-width: 720px; margin: 0 auto; padding: 32px 16px 96px; }
+  body[data-th="dark"] {
+    --bg:#171310; --card:#211B15; --ink:#EDE5D6; --ink2:#C2B6A4; --ink3:#9A8E7D;
+    --line:#372F26; --line2:#2A241D; --accent:#D89468; --accent-strong:#E0794A;
+    --chip:#2B241C; --guide-bg:#251F18; --code-bg:#100D0A; --code-ink:#E5DCCB;
+    --seg1:#C97A4E; --seg2:#CBA24A; --seg3:#8FA075; --err:#E07A5F;
+    --shadow:rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    background: var(--bg); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    transition: background .25s, color .25s;
+  }
+  .serif { font-family: "Newsreader", Georgia, serif; }
+  a { color: var(--accent); }
+  a:hover { color: var(--accent-strong); }
+  input, button, select { font-family: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+  @keyframes gsPulse { 0%,100% { opacity:.45 } 50% { opacity:1 } }
+  @keyframes gsDot { 0%,100% { transform:scale(1); opacity:.6 } 50% { transform:scale(1.3); opacity:1 } }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
 
   /* Header */
-  header { margin-bottom: 16px; }
-  h1 {
-    font-size: 28px; font-weight: 600; margin: 0 0 4px;
-    letter-spacing: -0.02em;
+  .topbar {
+    width: 100%; max-width: 720px; margin: 0 auto; padding: 20px 20px 0;
+    display: flex; justify-content: space-between; align-items: center;
   }
-  .tagline { color: var(--fg-muted); margin: 0 0 16px; }
+  .wordmark {
+    font-family: "Newsreader", Georgia, serif; font-weight: 600; font-size: 21px;
+    letter-spacing: -0.01em; color: var(--ink); background: none; border: none; padding: 4px 0;
+  }
+  .wordmark span { color: var(--accent-strong); }
+  .theme-toggle {
+    width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink3); background: none; font-size: 15px;
+  }
 
-  /* About box (hidden after first search) */
-  .about {
-    margin: 0 0 20px;
-    padding: 14px 16px;
-    background: var(--bg-subtle);
-    border-radius: 8px;
-    font-size: 14px;
-    color: var(--fg-muted);
+  .main {
+    width: 100%; max-width: 680px; margin: 0 auto; padding: 0 20px 40px;
+    flex: 1; display: flex; flex-direction: column;
   }
-  .about p { margin: 0 0 4px; }
-  .about p:last-child { margin: 0; }
-  .about strong { color: var(--fg); font-weight: 600; }
-  .about a { color: var(--accent); text-decoration: none; }
-  .about a:hover { text-decoration: underline; }
 
-  /* Search */
-  .search-form { margin-bottom: 16px; }
-  .search-row { display: flex; gap: 8px; }
-  .search-input {
-    flex: 1;
-    padding: 10px 14px;
-    font-size: 16px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
-    font-family: inherit;
+  /* Hero */
+  .hero { text-align: center; padding-top: clamp(36px, 11vh, 110px); }
+  .hero h1 {
+    font-family: "Newsreader", Georgia, serif; font-weight: 500;
+    font-size: clamp(31px, 6vw, 46px); line-height: 1.12; letter-spacing: -0.015em;
+    margin: 0 0 14px;
   }
-  .search-input:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: -1px;
-    border-color: var(--accent);
+  .hero p {
+    margin: 0 auto 30px; font-size: 16px; line-height: 1.55; color: var(--ink2);
+    max-width: 540px; text-wrap: pretty;
   }
-  .search-button {
-    padding: 10px 18px;
-    font-size: 15px;
-    font-weight: 500;
-    background: var(--accent);
-    color: white;
-    border: none;
-    border-radius: 6px;
+  .searched-gap { height: 18px; }
+
+  /* Search bar */
+  .search-card {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 2px 10px var(--shadow), 0 12px 32px var(--shadow);
+    padding: 0 16px; min-height: 58px;
+  }
+  .search-card input {
+    flex: 1; border: none; outline: none; background: none;
+    font-size: 16.5px; color: var(--ink); min-width: 0; height: 44px;
+  }
+  .kbd-hint {
+    font: 500 12px ui-monospace, Menlo, monospace; color: var(--ink3);
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; background: var(--bg);
+  }
+  @media (hover: none) { .kbd-hint { display: none; } }
+  .search-go {
+    background: var(--accent-strong); color: #FFF7EE; border: none; border-radius: 9px;
+    font-size: 14px; font-weight: 600; padding: 0 16px; height: 40px;
+  }
+
+  /* Example chips */
+  .examples {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 26px;
+    margin: 24px auto 0; max-width: 600px;
+  }
+  .chip {
+    background: none; border: none; padding: 6px 0; font-size: 14.5px; color: var(--accent);
+    text-decoration: underline; text-decoration-style: dotted;
+    text-underline-offset: 4px; text-decoration-color: var(--line);
+  }
+
+  /* Filters row */
+  .filters {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+    gap: 6px 18px; margin: 26px 0 0; font-size: 13px; color: var(--ink3);
+  }
+  .filters select {
+    border: none; background: none; color: var(--ink3); font-size: 13px; padding: 8px 0;
     cursor: pointer;
   }
-  .search-button:hover { background: var(--accent-hover); }
-  .search-button:disabled { opacity: 0.6; cursor: wait; }
+  .quiet-btn {
+    display: flex; align-items: center; gap: 7px; background: none; border: none;
+    color: var(--ink3); font-size: 13px; padding: 8px 0;
+  }
+  .switch {
+    width: 26px; height: 15px; border-radius: 99px; background: var(--line);
+    position: relative; transition: background .15s; flex: none;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+    border-radius: 99px; background: #fff; transition: left .15s;
+  }
+  .quiet-btn[aria-pressed="true"] .switch { background: var(--accent); }
+  .quiet-btn[aria-pressed="true"] .switch::after { left: 13px; }
 
-  .filters {
-    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
-    margin-top: 12px; font-size: 14px; color: var(--fg-muted);
+  /* Tune ranking panel */
+  .tune {
+    margin: 14px auto 0; width: 100%; max-width: 440px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px;
   }
-  .filters label { display: flex; align-items: center; gap: 6px; }
-  .filters input[type="text"], .filters input[type="number"] {
-    padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px;
-    background: var(--bg); color: var(--fg); font-family: inherit;
-    font-size: 14px;
+  .tune > p { margin: 0 0 12px; font-size: 12.5px; color: var(--ink3); }
+  .tune label {
+    display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink2);
+    margin-top: 10px;
   }
-  .filters input[type="text"] { width: 110px; }
-  .filters input[type="number"] { width: 90px; }
+  .tune label:first-of-type { margin-top: 0; }
+  .tune label > span:first-child { width: 86px; flex: none; }
+  .tune input[type="range"] { flex: 1; min-width: 0; }
+  .tune output {
+    width: 34px; text-align: right; flex: none;
+    font: 500 12px ui-monospace, Menlo, monospace; color: var(--ink3);
+  }
 
-  details.advanced {
-    margin-top: 12px; font-size: 14px; color: var(--fg-muted);
+  /* Wait area: skeleton or cold-start panel */
+  .wait-slot { margin-top: 22px; }
+  .status-spacer { height: 20px; margin-bottom: 14px; }
+  .skeleton-list { display: flex; flex-direction: column; gap: 14px; }
+  .skeleton {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; animation: gsPulse 1.4s ease-in-out infinite;
+    display: flex; gap: 12px; align-items: flex-start;
   }
-  details.advanced summary { cursor: pointer; user-select: none; }
-  .weights {
-    display: grid; grid-template-columns: 100px 1fr 50px;
-    gap: 6px 12px; margin-top: 12px; align-items: center;
-  }
-  .weights input[type="range"] { width: 100%; }
-  .weights output { font-variant-numeric: tabular-nums; text-align: right; }
+  .skeleton .sk-av { width: 40px; height: 40px; border-radius: 99px; background: var(--chip); flex: none; }
+  .skeleton .sk-lines { flex: 1; display: flex; flex-direction: column; gap: 9px; padding-top: 3px; }
+  .skeleton .sk-lines span { display: block; border-radius: 5px; }
+  .skeleton .sk-a { height: 14px; width: 38%; background: var(--chip); }
+  .skeleton .sk-b { height: 12px; width: 82%; background: var(--line2); }
+  .skeleton .sk-c { height: 11px; width: 55%; background: var(--line2); }
 
-  /* Examples */
-  .examples {
-    margin-top: 24px; padding: 16px; background: var(--bg-subtle);
-    border-radius: 8px; font-size: 14px;
+  .centered-panel { text-align: center; padding: 64px 24px; max-width: 460px; margin: 0 auto; }
+  .centered-panel h2 {
+    font-family: "Newsreader", Georgia, serif; font-weight: 500; font-size: 23px; margin: 0 0 10px;
   }
-  .examples-title { color: var(--fg-muted); margin-bottom: 8px; }
-  .examples-list { display: flex; flex-wrap: wrap; gap: 8px; }
-  .example-chip {
-    padding: 4px 10px; background: var(--bg); border: 1px solid var(--border);
-    border-radius: 999px; font-size: 13px; color: var(--accent);
-    cursor: pointer; font-family: inherit;
+  .centered-panel p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink2); text-wrap: pretty; }
+  .pulse-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 99px;
+    background: var(--accent-strong); animation: gsDot 1.6s ease-in-out infinite; margin-bottom: 18px;
   }
-  .example-chip:hover { background: var(--accent); color: white; border-color: var(--accent); }
-
-  /* Status line */
-  .status { margin-top: 24px; color: var(--fg-muted); font-size: 14px; }
-  .status.error { color: #cf222e; }
 
   /* Results */
-  .results { margin-top: 16px; list-style: none; padding: 0; }
+  .results-wrap { margin-top: 22px; }
+  .status-line { height: 20px; margin: 0 0 14px; font-size: 13px; color: var(--ink3); }
+  .results { display: flex; flex-direction: column; gap: 14px; list-style: none; margin: 0; padding: 0; }
   .result {
-    padding: 16px 0; border-top: 1px solid var(--border);
-    display: grid;
-    grid-template-columns: 40px 1fr;
-    gap: 12px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; box-shadow: 0 1px 4px var(--shadow);
+    display: flex; gap: 12px; align-items: flex-start;
   }
-  .result:first-child { border-top: none; padding-top: 8px; }
-  .avatar {
-    width: 40px; height: 40px; border-radius: 6px;
-    background: var(--bg-subtle);
-    object-fit: cover;
+  .avatar { width: 40px; height: 40px; border-radius: 99px; flex: none; background: var(--chip); }
+  .avatar-fallback {
+    width: 40px; height: 40px; border-radius: 99px; flex: none; background: var(--chip);
+    color: var(--accent); display: flex; align-items: center; justify-content: center;
+    font: 600 17px "Newsreader", Georgia, serif;
   }
-  .result-body { min-width: 0; }   /* allow text truncation in flex/grid */
+  .result-body { flex: 1; min-width: 0; }
   .result-name {
-    font-size: 16px; font-weight: 600; color: var(--accent);
-    text-decoration: none;
+    font-size: 16px; font-weight: 600; color: var(--ink); text-decoration: none;
+    word-break: break-word;
   }
-  .result-name:hover { text-decoration: underline; }
-  .result-desc { margin: 4px 0 0; color: var(--fg); }
+  .result-name:hover {
+    color: var(--accent-strong); text-decoration: underline; text-underline-offset: 3px;
+  }
+  .result-desc { margin: 5px 0 0; font-size: 14.5px; line-height: 1.5; color: var(--ink2); text-wrap: pretty; }
   .result-meta {
-    margin-top: 6px; font-size: 13px; color: var(--fg-muted);
-    display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+    display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 9px;
+    font-size: 13px; color: var(--ink3);
   }
-  .topics { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  .topic {
-    font-size: 12px; padding: 2px 8px; background: var(--bg-subtle);
-    border-radius: 999px; color: var(--fg-muted);
+  .result-meta .lang { display: flex; align-items: center; gap: 6px; }
+  .lang-dot { width: 9px; height: 9px; border-radius: 99px; display: inline-block; }
+  .topics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .topic { font-size: 12px; color: var(--ink2); background: var(--chip); border-radius: 999px; padding: 3px 10px; }
+
+  .result-actions {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 13px;
+  }
+  .guide-btn {
+    display: flex; align-items: center; gap: 8px;
+    border: 1.5px solid var(--accent); color: var(--accent); background: none;
+    border-radius: 999px; padding: 0 17px; height: 40px; font-size: 13.5px; font-weight: 600;
+  }
+  .guide-btn:hover { background: var(--chip); }
+  .guide-btn svg { flex: none; }
+  .why-btn {
+    background: none; border: none; color: var(--ink3); font-size: 13px; padding: 10px 2px;
+    text-decoration: underline; text-decoration-style: dotted;
+    text-underline-offset: 4px; text-decoration-color: var(--line);
   }
 
-  /* Score breakdown disclosure */
-  .why {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--fg-faint);
+  /* Score breakdown */
+  .score-panel {
+    margin-top: 14px; background: var(--guide-bg); border: 1px solid var(--line2);
+    border-radius: 12px; padding: 14px 16px;
   }
-  .why summary {
-    cursor: pointer; user-select: none;
-    list-style: none;     /* hide default disclosure triangle in some browsers */
+  .score-bar {
+    display: flex; height: 10px; border-radius: 99px; overflow: hidden; background: var(--line2);
   }
-  .why summary::-webkit-details-marker { display: none; }
-  .why summary::before {
-    content: "▸ ";
-    display: inline-block;
-    transition: transform 0.15s ease;
+  .score-legend {
+    display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 11px;
+    font-size: 12.5px; color: var(--ink2);
   }
-  .why[open] summary::before { transform: rotate(90deg); }
-  .why summary:hover { color: var(--fg-muted); }
-  .why-body {
-    margin-top: 8px;
-    padding: 10px 12px;
-    background: var(--bg-subtle);
-    border-radius: 6px;
+  .score-legend > span { display: flex; align-items: center; gap: 6px; }
+  .score-legend .total { margin-left: auto; font-weight: 600; }
+  .swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+  .score-panel .hint { margin: 9px 0 0; font-size: 12px; color: var(--ink3); }
+
+  /* Guide panels */
+  .guide-panel {
+    margin-top: 14px; background: var(--guide-bg); border: 1px solid var(--line2);
+    border-radius: 12px;
   }
-  .breakdown-bar {
-    display: flex; height: 8px; border-radius: 4px; overflow: hidden;
-    margin: 4px 0 8px; background: var(--bg-skeleton);
+  .guide-waiting { padding: 26px 20px; text-align: center; }
+  .guide-waiting .pulse-dot { width: 8px; height: 8px; margin-bottom: 10px; }
+  .guide-waiting .headline { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--ink); }
+  .guide-waiting .sub {
+    margin: 0 auto; font-size: 12.5px; line-height: 1.55; color: var(--ink3); max-width: 380px;
   }
-  .breakdown-bar > div { transition: flex-basis 0.2s ease; }
-  .breakdown-bar .similarity { background: var(--bar-similarity); }
-  .breakdown-bar .stars      { background: var(--bar-stars); }
-  .breakdown-bar .recency    { background: var(--bar-recency); }
-  .breakdown-rows {
-    display: grid;
-    grid-template-columns: 12px auto 1fr auto;
-    gap: 4px 10px;
-    align-items: center;
-    font-variant-numeric: tabular-nums;
+  .guide-failed { padding: 24px 20px; text-align: center; }
+  .guide-failed .headline { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--err); }
+  .guide-failed .sub { margin: 0 0 14px; font-size: 12.5px; color: var(--ink3); }
+  .retry-btn {
+    border: 1.5px solid var(--accent); color: var(--accent); background: none;
+    border-radius: 999px; padding: 0 18px; height: 38px; font-size: 13px; font-weight: 600;
   }
-  .swatch {
-    width: 10px; height: 10px; border-radius: 2px;
+  .guide-open { padding: 18px 20px; }
+  .guide-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .guide-eyebrow {
+    font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--accent);
   }
-  .breakdown-label { color: var(--fg-muted); }
-  .breakdown-value { color: var(--fg); }
-  .breakdown-formula {
-    margin-top: 6px;
-    color: var(--fg-faint);
-    font-size: 11px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  .guide-badge { font-size: 11.5px; color: var(--ink3); }
+  .guide-section { margin-bottom: 18px; }
+  .guide-section:last-of-type { margin-bottom: 0; }
+  .guide-section-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+  .guide-section-num { font: 600 11px ui-monospace, Menlo, monospace; color: var(--accent); }
+  .guide-section-title {
+    font-size: 12.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--ink2);
+  }
+  .guide-open p { margin: 8px 0; font-size: 14px; line-height: 1.65; color: var(--ink); }
+  .guide-open ul { margin: 8px 0; padding-left: 20px; }
+  .guide-open li { margin: 4px 0; font-size: 14px; line-height: 1.6; color: var(--ink); }
+  .guide-open code {
+    background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 12.5px;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .codeblock { position: relative; margin: 10px 0; }
+  .codeblock pre {
+    background: var(--code-bg); color: var(--code-ink); border-radius: 10px;
+    padding: 14px 72px 14px 16px; font-size: 13px; line-height: 1.6;
+    font-family: ui-monospace, Menlo, monospace; overflow-x: auto; margin: 0;
+  }
+  .codeblock pre code { background: none; padding: 0; border-radius: 0; font-size: 13px; color: inherit; }
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px;
+    font: 500 11.5px system-ui, sans-serif; background: rgba(250,247,241,.1);
+    color: var(--code-ink); border: 1px solid rgba(250,247,241,.22);
+    border-radius: 6px; padding: 4px 10px;
+  }
+  .guide-footnote {
+    margin: 16px 0 0; padding-top: 12px; border-top: 1px dashed var(--line);
+    font-size: 12px; font-style: italic; color: var(--ink3);
   }
 
-  /* "How do I use this?" usage-guide disclosure (provisional styling). */
-  .guide {
-    margin-top: 8px;
-    font-size: 13px;
-    color: var(--fg-faint);
+  /* Zero / error panels reuse .centered-panel */
+  .centered-panel .chips-inline {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 24px; margin-top: 20px;
   }
-  .guide summary {
-    cursor: pointer; user-select: none;
-    list-style: none;
-  }
-  .guide summary::-webkit-details-marker { display: none; }
-  .guide summary::before {
-    content: "▸ ";
-    display: inline-block;
-    transition: transform 0.15s ease;
-  }
-  .guide[open] summary::before { transform: rotate(90deg); }
-  .guide summary:hover { color: var(--fg-muted); }
-  .guide-body {
-    margin-top: 8px;
-    padding: 12px 14px;
-    background: var(--bg-subtle);
-    border-radius: 6px;
-    color: var(--fg);
-    font-size: 14px;
-  }
-  .guide-body h4 {
-    margin: 12px 0 4px; font-size: 13px; font-weight: 600; color: var(--fg);
-  }
-  .guide-body h4:first-child { margin-top: 0; }
-  .guide-body p { margin: 4px 0; }
-  .guide-body ul { margin: 4px 0; padding-left: 20px; }
-  .guide-body li { margin: 2px 0; }
-  .guide-body pre {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    padding: 8px 10px; overflow-x: auto; margin: 6px 0;
-  }
-  .guide-body code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px;
-  }
-  .guide-body pre code { font-size: 12px; }
-
-  /* Skeleton loading state */
-  .skeleton-list { margin-top: 16px; list-style: none; padding: 0; }
-  .skeleton {
-    padding: 16px 0;
-    border-top: 1px solid var(--border);
-    display: grid;
-    grid-template-columns: 40px 1fr;
-    gap: 12px;
-  }
-  .skeleton:first-child { border-top: none; padding-top: 8px; }
-  .skeleton-avatar, .skeleton-line {
-    background: var(--bg-skeleton);
-    border-radius: 6px;
-    animation: pulse 1.4s ease-in-out infinite;
-  }
-  .skeleton-avatar { width: 40px; height: 40px; }
-  .skeleton-line { height: 14px; margin-bottom: 6px; border-radius: 4px; }
-  .skeleton-line.short { width: 35%; }
-  .skeleton-line.medium { width: 75%; }
-  .skeleton-line.long { width: 100%; }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.6; }
-    50% { opacity: 1; }
+  .centered-panel h2.error { color: var(--err); }
+  .retry-search {
+    margin-top: 18px; border: 1.5px solid var(--accent); color: var(--accent); background: none;
+    border-radius: 999px; padding: 0 20px; height: 42px; font-size: 13.5px; font-weight: 600;
   }
 
-  /* Footer */
-  footer {
-    margin-top: 64px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    font-size: 13px;
-    color: var(--fg-faint);
-    text-align: center;
+  footer { padding: 26px 20px; text-align: center; font-size: 12.5px; color: var(--ink3); }
+  footer a {
+    color: var(--ink3); text-decoration: underline; text-underline-offset: 3px;
+    text-decoration-color: var(--line);
   }
-  footer a { color: var(--fg-muted); text-decoration: none; }
-  footer a:hover { color: var(--accent); text-decoration: underline; }
-  kbd {
-    display: inline-block;
-    padding: 1px 5px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 11px;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    color: var(--fg-muted);
+  .about-search {
+    text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px;
+    text-decoration-color: var(--line); cursor: help;
   }
 </style>
 </head>
 <body>
-<div class="container">
-<header>
-  <h1>gitsearch</h1>
-  <p class="tagline">Semantic search over GitHub repositories.</p>
-</header>
+<script>
+  /* Set the theme before first paint to avoid a flash. Follows the system
+   * until the user toggles; the explicit choice persists. */
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem("gitsearch-theme"); } catch (e) {}
+    var dark = saved ? saved === "dark"
+                     : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.body.dataset.th = dark ? "dark" : "light";
+  })();
+</script>
 
-<aside class="about" id="about">
-  <p>Type what you're looking for in plain English — <strong>"fast http server in rust"</strong>, <strong>"vector database for embeddings"</strong> — and get back repos ranked by what they actually do, not by keyword overlap.</p>
-  <p>Searches a corpus of <strong>~20,000 GitHub repositories</strong> with hybrid ranking that combines semantic similarity, popularity, and recency. <a href="https://github.com/feynma1h/gitsearch" target="_blank" rel="noopener">See how it's built →</a></p>
-</aside>
+<div class="topbar">
+  <button class="wordmark" id="home" aria-label="gitsearch — back to start">gitsearch<span>.</span></button>
+  <button class="theme-toggle" id="theme" aria-label="Switch color theme" title="Switch theme">☾</button>
+</div>
 
-<form class="search-form" id="search-form">
-  <div class="search-row">
-    <input class="search-input" id="q" type="text" placeholder="What are you looking for?" autocomplete="off" autofocus>
-    <button class="search-button" id="submit" type="submit">Search</button>
+<div class="main">
+  <div class="hero" id="hero">
+    <h1>What are you trying to build?</h1>
+    <p>Describe it in plain English and we’ll find the GitHub repos that can do it — searching 250,000 of them by what they do, with a quick‑start guide for every result.</p>
   </div>
+  <div class="searched-gap" id="searched-gap" hidden></div>
+
+  <form class="search-card" id="search-form">
+    <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="var(--ink3)" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="6.2"/><path d="M13.6 13.6 18 18"/></svg>
+    <input id="q" type="text" placeholder="Describe what you need…" aria-label="Describe what you need" autocomplete="off" autofocus>
+    <span class="kbd-hint" aria-hidden="true">/</span>
+    <button class="search-go" type="submit">Search</button>
+  </form>
+
+  <div class="examples" id="examples"></div>
 
   <div class="filters">
-    <label>Language <input type="text" id="language" placeholder="any"></label>
-    <label>Min stars <input type="number" id="min-stars" min="0" placeholder="0"></label>
-    <label><input type="checkbox" id="exclude-archived" checked> Hide archived</label>
+    <select id="language" aria-label="Filter by language">
+      <option>Any language</option>
+      <option>C</option><option>C++</option><option>C#</option><option>Go</option>
+      <option>Java</option><option>JavaScript</option><option>Kotlin</option>
+      <option>Lua</option><option>PHP</option><option>Python</option>
+      <option>Ruby</option><option>Rust</option><option>Shell</option>
+      <option>Swift</option><option>TypeScript</option><option>Zig</option>
+    </select>
+    <select id="min-stars" aria-label="Minimum stars">
+      <option value="0">Any stars</option>
+      <option value="100">100+ stars</option>
+      <option value="1000">1,000+ stars</option>
+      <option value="10000">10,000+ stars</option>
+    </select>
+    <button type="button" class="quiet-btn" id="arch" aria-pressed="true">
+      <span class="switch" aria-hidden="true"></span>
+      Hide archived
+    </button>
+    <button type="button" class="quiet-btn" id="tune-toggle" aria-expanded="false">
+      Tune ranking
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5"/></svg>
+    </button>
   </div>
 
-  <details class="advanced">
-    <summary>Tune scoring</summary>
-    <div class="weights">
-      <span>Similarity</span>
-      <input type="range" id="w-similarity" min="0" max="2" step="0.1" value="1.0">
-      <output for="w-similarity">1.0</output>
+  <div class="tune" id="tune" hidden>
+    <p>How results are ordered. Move a slider and we’ll run your search again with the new mix.</p>
+    <label><span>Relevance</span><input type="range" id="w-rel" min="0" max="2" step="0.1" value="1.0" style="accent-color: var(--seg1)"><output id="w-rel-out">1.0×</output></label>
+    <label><span>Popularity</span><input type="range" id="w-pop" min="0" max="2" step="0.1" value="0.3" style="accent-color: var(--seg2)"><output id="w-pop-out">0.3×</output></label>
+    <label><span>Recency</span><input type="range" id="w-rec" min="0" max="2" step="0.1" value="0.2" style="accent-color: var(--seg3)"><output id="w-rec-out">0.2×</output></label>
+  </div>
 
-      <span>Stars</span>
-      <input type="range" id="w-stars" min="0" max="2" step="0.1" value="0.3">
-      <output for="w-stars">0.3</output>
-
-      <span>Recency</span>
-      <input type="range" id="w-recency" min="0" max="2" step="0.1" value="0.2">
-      <output for="w-recency">0.2</output>
+  <div class="wait-slot" id="wait" hidden>
+    <div id="wait-skeleton">
+      <div class="status-spacer"></div>
+      <div class="skeleton-list" aria-hidden="true">
+        <div class="skeleton"><span class="sk-av"></span><div class="sk-lines"><span class="sk-a"></span><span class="sk-b"></span><span class="sk-c"></span></div></div>
+        <div class="skeleton"><span class="sk-av"></span><div class="sk-lines"><span class="sk-a"></span><span class="sk-b"></span><span class="sk-c"></span></div></div>
+        <div class="skeleton"><span class="sk-av"></span><div class="sk-lines"><span class="sk-a"></span><span class="sk-b"></span><span class="sk-c"></span></div></div>
+      </div>
     </div>
-  </details>
-</form>
+    <div class="centered-panel" id="wait-cold" hidden>
+      <span class="pulse-dot" aria-hidden="true"></span>
+      <h2 id="cold-title">Waking up the search engine…</h2>
+      <p id="cold-sub">The first search after a quiet spell takes about 15 seconds while the engine starts. After this one, searches take about a second.</p>
+    </div>
+  </div>
 
-<div class="examples" id="examples">
-  <div class="examples-title">Try one of these:</div>
-  <div class="examples-list">
-    <button class="example-chip" type="button">fast http server in rust</button>
-    <button class="example-chip" type="button">kubernetes package manager</button>
-    <button class="example-chip" type="button">vector database for embeddings</button>
-    <button class="example-chip" type="button">static site generator</button>
-    <button class="example-chip" type="button">javascript testing framework</button>
+  <div class="results-wrap" id="results-wrap" hidden>
+    <p class="status-line" id="status" aria-live="polite"></p>
+    <ol class="results" id="results"></ol>
+  </div>
+
+  <div class="centered-panel" id="zero" hidden>
+    <h2>No matches for that yet.</h2>
+    <p>Try broader words — describe what the tool should do rather than what it’s called. Or start from one of these:</p>
+    <div class="chips-inline" id="zero-examples"></div>
+  </div>
+
+  <div class="centered-panel" id="error" hidden>
+    <h2 class="error">Something went wrong on our end.</h2>
+    <p>Your search didn’t make it through. It’s still in the box above — give it another try in a moment.</p>
+    <button class="retry-search" id="retry">Try again</button>
   </div>
 </div>
-
-<div class="status" id="status"></div>
-<ol class="results" id="results"></ol>
-<ol class="skeleton-list" id="skeleton" hidden></ol>
 
 <footer>
-  <a href="https://github.com/feynma1h/gitsearch" target="_blank" rel="noopener">source</a>
-  ·
-  press <kbd>/</kbd> to search, <kbd>Esc</kbd> to clear
+  <a href="https://github.com/feynma1h/gitsearch" target="_blank" rel="noopener">see how it’s built</a>
+  <span aria-hidden="true"> · </span>
+  <span class="about-search" id="about-search" title="Search runs on an embedding model. Guides are written by an AI model from each repo’s files.">about the search</span>
 </footer>
-</div>
+
+<noscript><p style="text-align:center;padding:16px">gitsearch needs JavaScript to search.</p></noscript>
 
 <script>
-  /* Configuration:
-   *   - API_BASE: the deployed search service. The localhost fallback
-   *     supports running the file from `python -m http.server` during dev.
-   *   - SEARCH_URL / GUIDE_URL: the two endpoints we call.
-   */
+  /* Configuration: API_BASE is the deployed search service. Override by
+   * setting window.GITSEARCH_API_URL before this script (see README). */
   const API_BASE = window.GITSEARCH_API_URL || "https://gitsearch-search-148185858207.asia-southeast1.run.app";
   const SEARCH_URL = API_BASE + "/search";
   const GUIDE_URL = repoId => `${API_BASE}/guide/${encodeURIComponent(repoId)}`;
 
-  const $ = id => document.getElementById(id);
-  const form = $("search-form");
-  const status = $("status");
-  const results = $("results");
-  const skeleton = $("skeleton");
-  const examples = $("examples");
-  const about = $("about");
-  const queryInput = $("q");
+  /* Example queries. Every one of these was verified against the live corpus
+   * (top-3 results checked). Don't add new ones without doing the same —
+   * friendly-sounding queries can return bad results. */
+  const EXAMPLES = [
+    "download videos from youtube",
+    "remove the background from an image",
+    "recipe manager",
+    "home automation",
+    "web scraping in python",
+    "fast http server in rust",
+  ];
 
-  // Weight slider live values.
-  for (const k of ["similarity", "stars", "recency"]) {
-    const slider = $(`w-${k}`);
-    const output = slider.nextElementSibling;
-    slider.addEventListener("input", () => { output.value = slider.value; });
+  const LANG_COLORS = {
+    Rust:"#DEA584", Go:"#4FA8C7", C:"#8C8C8C", "C++":"#F34B7D", "C#":"#178600",
+    Python:"#4B8BBE", JavaScript:"#C9A227", TypeScript:"#3178C6", Shell:"#89A855",
+    Lua:"#5B7FC7", Zig:"#EC915C", Java:"#B07219", Kotlin:"#A97BFF", PHP:"#4F5D95",
+    Ruby:"#701516", Swift:"#F05138",
+  };
+
+  const $ = id => document.getElementById(id);
+  const els = {
+    hero: $("hero"), gap: $("searched-gap"), form: $("search-form"), q: $("q"),
+    examples: $("examples"), zeroExamples: $("zero-examples"),
+    wait: $("wait"), waitSkeleton: $("wait-skeleton"), waitCold: $("wait-cold"),
+    coldTitle: $("cold-title"), coldSub: $("cold-sub"),
+    resultsWrap: $("results-wrap"), status: $("status"), results: $("results"),
+    zero: $("zero"), error: $("error"), retry: $("retry"),
+    tune: $("tune"), tuneToggle: $("tune-toggle"), arch: $("arch"),
+    language: $("language"), minStars: $("min-stars"),
+    theme: $("theme"), home: $("home"), about: $("about-search"),
+  };
+
+  const state = {
+    warmed: false,          // a search has completed this visit (engine is awake)
+    lastQuery: "",
+    searchSeq: 0,           // invalidates in-flight searches
+    searchModel: "",
+    guideModel: "",
+    guides: {},             // repo_id -> {md, badge} once loaded this session
+    timers: [],
+  };
+
+  function after(ms, fn) { state.timers.push(setTimeout(fn, ms)); }
+  function clearTimers() { state.timers.forEach(clearTimeout); state.timers = []; }
+
+  function el(tag, className, text) {
+    const n = document.createElement(tag);
+    if (className) n.className = className;
+    if (text !== undefined) n.textContent = text;
+    return n;
   }
 
-  // Example chips.
-  examples.querySelectorAll(".example-chip").forEach(btn => {
-    btn.addEventListener("click", () => {
-      queryInput.value = btn.textContent;
-      form.requestSubmit();
-    });
+  /* ---- Theme ------------------------------------------------------------ */
+  const mq = matchMedia("(prefers-color-scheme: dark)");
+  let themeChosen = null;
+  try { themeChosen = localStorage.getItem("gitsearch-theme"); } catch (e) {}
+  function setThemeIcon() { els.theme.textContent = document.body.dataset.th === "dark" ? "☀" : "☾"; }
+  setThemeIcon();
+  mq.addEventListener("change", e => {
+    if (!themeChosen) { document.body.dataset.th = e.matches ? "dark" : "light"; setThemeIcon(); }
+  });
+  els.theme.addEventListener("click", () => {
+    const dark = document.body.dataset.th !== "dark";
+    document.body.dataset.th = dark ? "dark" : "light";
+    themeChosen = dark ? "dark" : "light";
+    try { localStorage.setItem("gitsearch-theme", themeChosen); } catch (e) {}
+    setThemeIcon();
   });
 
-  // Keyboard shortcuts.
+  /* ---- Example chips ---------------------------------------------------- */
+  for (const target of [els.examples, els.zeroExamples]) {
+    for (const q of EXAMPLES) {
+      const b = el("button", "chip", q);
+      b.type = "button";
+      b.addEventListener("click", () => { els.q.value = q; doSearch(q); });
+      target.appendChild(b);
+    }
+  }
+
+  /* ---- Keyboard --------------------------------------------------------- */
   document.addEventListener("keydown", e => {
-    // "/" focuses the search box (unless already typing in some input).
-    if (e.key === "/" && document.activeElement.tagName !== "INPUT") {
-      e.preventDefault();
-      queryInput.focus();
-      queryInput.select();
+    const t = document.activeElement && document.activeElement.tagName;
+    if (e.key === "/" && t !== "INPUT" && t !== "TEXTAREA" && t !== "SELECT") {
+      e.preventDefault(); els.q.focus(); els.q.select();
     }
-    // Esc clears the search box when it's focused.
-    if (e.key === "Escape" && document.activeElement === queryInput) {
-      queryInput.value = "";
+    if (e.key === "Escape") {
+      els.q.value = "";
+      if (t === "INPUT") document.activeElement.blur();
     }
   });
 
-  form.addEventListener("submit", async e => {
-    e.preventDefault();
-    const query = queryInput.value.trim();
+  /* ---- Header ----------------------------------------------------------- */
+  els.home.addEventListener("click", () => {
+    clearTimers(); state.searchSeq++;
+    els.q.value = "";
+    showPhase("idle");
+    setTimeout(() => els.q.focus(), 60);
+  });
+
+  /* ---- Filters / tuning ------------------------------------------------- */
+  els.tuneToggle.addEventListener("click", () => {
+    const open = els.tune.hidden;
+    els.tune.hidden = !open;
+    els.tuneToggle.setAttribute("aria-expanded", String(open));
+  });
+  els.arch.addEventListener("click", () => {
+    els.arch.setAttribute("aria-pressed", els.arch.getAttribute("aria-pressed") !== "true");
+    researchIfActive();
+  });
+  els.language.addEventListener("change", researchIfActive);
+  els.minStars.addEventListener("change", researchIfActive);
+  for (const k of ["rel", "pop", "rec"]) {
+    const slider = $(`w-${k}`), out = $(`w-${k}-out`);
+    slider.addEventListener("input", () => { out.textContent = Number(slider.value).toFixed(1) + "×"; });
+    slider.addEventListener("change", researchIfActive);
+  }
+  function researchIfActive() {
+    if (state.lastQuery && !els.resultsWrap.hidden || !els.zero.hidden) doSearch(state.lastQuery);
+  }
+
+  /* ---- Phases ----------------------------------------------------------- */
+  function showPhase(phase) {
+    els.hero.hidden = phase !== "idle";
+    els.examples.hidden = phase !== "idle";
+    els.gap.hidden = phase === "idle";
+    els.wait.hidden = phase !== "waiting";
+    els.resultsWrap.hidden = phase !== "results";
+    els.zero.hidden = phase !== "zero";
+    els.error.hidden = phase !== "error";
+    if (phase !== "results") { els.results.innerHTML = ""; els.status.textContent = ""; }
+    if (phase === "waiting") {
+      els.waitSkeleton.hidden = false;
+      els.waitCold.hidden = true;
+    }
+  }
+
+  const COLD_STAGES = [
+    ["Waking up the search engine…",
+     "The first search after a quiet spell takes about 15 seconds while the engine starts. After this one, searches take about a second."],
+    ["Still waking up — nearly there.",
+     "This only happens on the first search of a visit. Yours will run the moment the engine is awake."],
+    ["Almost ready…", "Fetching your results now."],
+  ];
+  function coldStage(i) {
+    els.waitSkeleton.hidden = true;
+    els.waitCold.hidden = false;
+    els.coldTitle.textContent = COLD_STAGES[i][0];
+    els.coldSub.textContent = COLD_STAGES[i][1];
+  }
+
+  /* ---- Search ----------------------------------------------------------- */
+  els.form.addEventListener("submit", e => { e.preventDefault(); doSearch(els.q.value); });
+  els.q.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); doSearch(els.q.value); }
+  });
+  els.retry.addEventListener("click", () => doSearch(state.lastQuery || els.q.value));
+
+  async function doSearch(query) {
+    query = (query || "").trim();
     if (!query) return;
+    clearTimers();
+    const seq = ++state.searchSeq;
+    state.lastQuery = query;
+    els.q.value = query;
+    showPhase("waiting");
 
-    const filters = {};
-    if ($("language").value.trim()) filters.language = $("language").value.trim();
-    if ($("min-stars").value) filters.min_stars = parseInt($("min-stars").value, 10);
-    filters.exclude_archived = $("exclude-archived").checked;
+    // The engine sleeps when unused. If this is the visit's first search and
+    // it's genuinely slow, explain the wake-up rather than pulsing silently.
+    if (!state.warmed) {
+      after(2500, () => seq === state.searchSeq && coldStage(0));
+      after(8500, () => seq === state.searchSeq && coldStage(1));
+      after(14000, () => seq === state.searchSeq && coldStage(2));
+    }
 
+    const filters = { exclude_archived: els.arch.getAttribute("aria-pressed") === "true" };
+    if (els.language.value !== "Any language") filters.language = els.language.value;
+    if (+els.minStars.value > 0) filters.min_stars = +els.minStars.value;
     const weights = {
-      similarity: parseFloat($("w-similarity").value),
-      stars: parseFloat($("w-stars").value),
-      recency: parseFloat($("w-recency").value),
+      similarity: +$("w-rel").value,
+      stars: +$("w-pop").value,
+      recency: +$("w-rec").value,
     };
 
-    // Hide first-time-only chrome and show loading state.
-    examples.style.display = "none";
-    about.style.display = "none";
-    status.className = "status";
-    status.textContent = "";
-    results.innerHTML = "";
-    showSkeleton();
-    $("submit").disabled = true;
-
+    const t0 = performance.now();
+    const ctrl = new AbortController();
+    after(75000, () => ctrl.abort());
     try {
       const resp = await fetch(SEARCH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, limit: 20, filters, weights }),
+        signal: ctrl.signal,
       });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+      if (seq !== state.searchSeq) return;
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      hideSkeleton();
-      render(data);
+      if (seq !== state.searchSeq) return;
+      clearTimers();
+      state.warmed = true;
+      state.searchModel = data.model || state.searchModel;
+      updateAboutTip();
+      if (!data.hits || !data.hits.length) { showPhase("zero"); return; }
+      renderResults(data.hits, (performance.now() - t0) / 1000);
     } catch (err) {
-      hideSkeleton();
-      status.className = "status error";
-      status.textContent = `Error: ${err.message}`;
-    } finally {
-      $("submit").disabled = false;
-    }
-  });
-
-  function showSkeleton() {
-    skeleton.hidden = false;
-    skeleton.innerHTML = "";
-    for (let i = 0; i < 5; i++) {
-      const li = document.createElement("li");
-      li.className = "skeleton";
-      li.innerHTML = `
-        <div class="skeleton-avatar"></div>
-        <div>
-          <div class="skeleton-line short"></div>
-          <div class="skeleton-line long"></div>
-          <div class="skeleton-line medium"></div>
-        </div>
-      `;
-      skeleton.appendChild(li);
-    }
-  }
-  function hideSkeleton() {
-    skeleton.hidden = true;
-    skeleton.innerHTML = "";
-  }
-
-  function render(data) {
-    const { hits, took_ms, model } = data;
-    status.textContent =
-      `${hits.length} result${hits.length === 1 ? "" : "s"} in ${took_ms} ms · model: ${model}`;
-    results.innerHTML = "";
-    for (const hit of hits) {
-      results.appendChild(renderHit(hit));
+      if (seq !== state.searchSeq) return;
+      clearTimers();
+      showPhase("error");
     }
   }
 
+  function renderResults(hits, elapsed) {
+    showPhase("results");
+    els.status.textContent =
+      `${hits.length} result${hits.length === 1 ? "" : "s"} · ${Math.max(elapsed, 0.1).toFixed(1)}s`;
+    els.results.innerHTML = "";
+    for (const hit of hits) els.results.appendChild(renderHit(hit));
+  }
+
+  /* ---- Result cards ----------------------------------------------------- */
   function renderHit(hit) {
-    const li = document.createElement("li");
-    li.className = "result";
-
+    const li = el("li", "result");
     const owner = hit.full_name.split("/")[0];
-    const avatarUrl = `https://github.com/${encodeURIComponent(owner)}.png?size=80`;
 
-    const meta = [
-      hit.primary_language ? `<span>${esc(hit.primary_language)}</span>` : "",
-      `<span>★ ${fmtStars(hit.stars)}</span>`,
-      hit.pushed_at ? `<span>updated ${fmtDate(hit.pushed_at)}</span>` : "",
-    ].filter(Boolean).join("");
+    const img = el("img", "avatar");
+    img.src = `https://github.com/${encodeURIComponent(owner)}.png?size=80`;
+    img.alt = ""; img.loading = "lazy"; img.width = 40; img.height = 40;
+    img.addEventListener("error", () => {
+      const fb = el("span", "avatar-fallback", owner[0].toUpperCase());
+      fb.setAttribute("aria-hidden", "true");
+      img.replaceWith(fb);
+    });
+    li.appendChild(img);
 
-    const topicsHtml = (hit.topics || []).slice(0, 5)
-      .map(t => `<span class="topic">${esc(t)}</span>`).join("");
+    const body = el("div", "result-body");
+    li.appendChild(body);
 
-    li.innerHTML = `
-      <img class="avatar" src="${esc(avatarUrl)}" alt="" loading="lazy"
-           onerror="this.style.visibility='hidden'">
-      <div class="result-body">
-        <a class="result-name" href="${esc(hit.url)}" target="_blank" rel="noopener">${esc(hit.full_name)}</a>
-        ${hit.description ? `<p class="result-desc">${esc(hit.description)}</p>` : ""}
-        <div class="result-meta">${meta}</div>
-        ${topicsHtml ? `<div class="topics">${topicsHtml}</div>` : ""}
-        ${renderWhy(hit)}
-        ${renderGuide()}
-      </div>
-    `;
+    const name = el("a", "result-name", hit.full_name);
+    name.href = hit.url; name.target = "_blank"; name.rel = "noopener";
+    body.appendChild(name);
 
-    // Lazily load the usage guide the first time the disclosure is opened.
-    const guideEl = li.querySelector("details.guide");
-    if (guideEl) {
-      guideEl.addEventListener("toggle", () => {
-        if (guideEl.open && !guideEl.dataset.loaded) loadGuide(guideEl, hit.repo_id);
-      });
+    if (hit.description) body.appendChild(el("p", "result-desc", hit.description));
+
+    const meta = el("div", "result-meta");
+    if (hit.primary_language) {
+      const lang = el("span", "lang");
+      const dot = el("span", "lang-dot");
+      dot.style.background = LANG_COLORS[hit.primary_language] || "var(--ink3)";
+      lang.append(dot, hit.primary_language);
+      meta.appendChild(lang);
     }
+    const stars = el("span", "", `★ ${fmtStars(hit.stars)}`);
+    stars.title = "GitHub stars";
+    meta.appendChild(stars);
+    if (hit.pushed_at) meta.appendChild(el("span", "", fmtUpdated(hit.pushed_at)));
+    body.appendChild(meta);
+
+    if (hit.topics && hit.topics.length) {
+      const topics = el("div", "topics");
+      for (const t of hit.topics.slice(0, 5)) topics.appendChild(el("span", "topic", t));
+      body.appendChild(topics);
+    }
+
+    const actions = el("div", "result-actions");
+    const guideBtn = el("button", "guide-btn");
+    guideBtn.type = "button";
+    guideBtn.setAttribute("aria-label", "Show me how to use it");
+    guideBtn.setAttribute("aria-expanded", "false");
+    guideBtn.innerHTML =
+      `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.2C6.8 2.2 5 2 3 2v10.5c2 0 3.8.2 5 1.3 1.2-1.1 3-1.3 5-1.3V2c-2 0-3.8.2-5 1.2Z"/><path d="M8 3.2v10.6"/></svg>`;
+    guideBtn.appendChild(el("span", "", "Show me how to use it"));
+    const whyBtn = el("button", "why-btn", "Why this rank?");
+    whyBtn.type = "button";
+    whyBtn.setAttribute("aria-expanded", "false");
+    actions.append(guideBtn, whyBtn);
+    body.appendChild(actions);
+
+    const scoreSlot = el("div");
+    const guideSlot = el("div");
+    body.append(scoreSlot, guideSlot);
+
+    whyBtn.addEventListener("click", () => {
+      if (scoreSlot.firstChild) {
+        scoreSlot.innerHTML = "";
+        whyBtn.textContent = "Why this rank?";
+        whyBtn.setAttribute("aria-expanded", "false");
+      } else {
+        scoreSlot.appendChild(renderScore(hit));
+        whyBtn.textContent = "Hide ranking";
+        whyBtn.setAttribute("aria-expanded", "true");
+      }
+    });
+
+    guideBtn.addEventListener("click", () => toggleGuide(hit, guideBtn, guideSlot));
     return li;
   }
 
-  /* The "how do I use this?" disclosure. Empty until first opened; the guide
-   * is fetched from /guide/{repo_id} on demand (generated once server-side,
-   * then cached). Deliberately minimal — the visual design is handled
-   * separately. */
-  function renderGuide() {
-    return `
-      <details class="guide">
-        <summary>how do I use this?</summary>
-        <div class="guide-body">Open to load a quick start guide.</div>
-      </details>
-    `;
-  }
-
-  async function loadGuide(el, repoId) {
-    el.dataset.loaded = "1";
-    const body = el.querySelector(".guide-body");
-    body.textContent = "Generating a quick start guide…";
-    try {
-      const resp = await fetch(GUIDE_URL(repoId));
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      body.innerHTML = renderMarkdown(data.guide || "");
-    } catch (err) {
-      el.dataset.loaded = "";   // allow a retry on re-open
-      body.textContent = `Couldn't load the guide (${err.message}).`;
-    }
-  }
-
-  /* Minimal Markdown renderer for the fixed guide format: `## headings`,
-   * fenced ```code blocks```, `- bullet` lists, `inline code`, and
-   * paragraphs. Not a general Markdown parser — just enough for the guide,
-   * and everything is HTML-escaped. */
-  function renderMarkdown(md) {
-    const lines = md.replace(/\r\n/g, "\n").split("\n");
-    const out = [];
-    let i = 0;
-    let listOpen = false;
-    const closeList = () => { if (listOpen) { out.push("</ul>"); listOpen = false; } };
-
-    while (i < lines.length) {
-      const line = lines[i];
-      if (line.startsWith("```")) {                       // fenced code block
-        closeList();
-        const buf = [];
-        i++;
-        while (i < lines.length && !lines[i].startsWith("```")) buf.push(lines[i++]);
-        i++;                                              // skip closing fence
-        out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);
-        continue;
-      }
-      if (/^#{1,6}\s/.test(line)) {                        // heading -> h4
-        closeList();
-        out.push(`<h4>${inlineMd(line.replace(/^#{1,6}\s+/, ""))}</h4>`);
-      } else if (/^\s*[-*]\s+/.test(line)) {               // bullet
-        if (!listOpen) { out.push("<ul>"); listOpen = true; }
-        out.push(`<li>${inlineMd(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
-      } else if (line.trim() === "") {                     // blank line
-        closeList();
-      } else {                                             // paragraph text
-        closeList();
-        out.push(`<p>${inlineMd(line)}</p>`);
-      }
-      i++;
-    }
-    closeList();
-    return out.join("");
-  }
-
-  // Escape, then re-introduce inline `code` spans.
-  function inlineMd(text) {
-    return esc(text).replace(/`([^`]+)`/g, "<code>$1</code>");
-  }
-
-  /* The "why this rank?" disclosure.
-   *
-   * Shows the breakdown of hybrid_score into its three components. Each
-   * component is already weight-multiplied (the API returns them that way),
-   * so they sum exactly to hybrid_score. We render:
-   *   - a horizontal stacked bar showing relative contribution
-   *   - a row per component with its colored swatch, raw number, and
-   *     percentage of the total
-   *   - a one-liner showing the formula in numbers
-   *
-   * If hybrid_score happens to be ~0 (degenerate case — all weights zero
-   * or all components zero), we render a fallback message instead of
-   * dividing by zero. */
-  function renderWhy(hit) {
-    const sim = hit.similarity_contribution;
-    const stars = hit.stars_contribution;
-    const rec = hit.recency_contribution;
-    const total = hit.hybrid_score;
+  /* ---- "Why this rank?" -------------------------------------------------- */
+  function renderScore(hit) {
+    const panel = el("div", "score-panel");
+    const rel = hit.similarity_contribution, pop = hit.stars_contribution,
+          rec = hit.recency_contribution;
+    const total = rel + pop + rec;
 
     if (total <= 0.0001) {
-      return `
-        <details class="why">
-          <summary>why this rank?</summary>
-          <div class="why-body">All scoring components are zero. This result was returned by the candidate fetch but contributes nothing to ranking.</div>
-        </details>
-      `;
+      panel.appendChild(el("p", "hint",
+        "All ranking components are zero for this result — it matched the search but contributes nothing to the ordering."));
+      return panel;
     }
 
-    const pct = v => ((v / total) * 100).toFixed(0);
-    const sw = cls => `<span class="swatch" style="background: var(--bar-${cls})"></span>`;
+    const bar = el("div", "score-bar");
+    for (const [v, seg] of [[rel, 1], [pop, 2], [rec, 3]]) {
+      const s = el("span");
+      s.style.width = (v / total * 100).toFixed(1) + "%";
+      s.style.background = `var(--seg${seg})`;
+      bar.appendChild(s);
+    }
+    panel.appendChild(bar);
 
-    return `
-      <details class="why">
-        <summary>why this rank?</summary>
-        <div class="why-body">
-          <div class="breakdown-bar">
-            <div class="similarity" style="flex-basis: ${pct(sim)}%"></div>
-            <div class="stars"      style="flex-basis: ${pct(stars)}%"></div>
-            <div class="recency"    style="flex-basis: ${pct(rec)}%"></div>
-          </div>
-          <div class="breakdown-rows">
-            ${sw('similarity')}<span class="breakdown-label">Similarity</span><span class="breakdown-value">${sim.toFixed(3)}</span><span class="breakdown-label">${pct(sim)}%</span>
-            ${sw('stars')}<span class="breakdown-label">Stars</span><span class="breakdown-value">${stars.toFixed(3)}</span><span class="breakdown-label">${pct(stars)}%</span>
-            ${sw('recency')}<span class="breakdown-label">Recency</span><span class="breakdown-value">${rec.toFixed(3)}</span><span class="breakdown-label">${pct(rec)}%</span>
-          </div>
-          <div class="breakdown-formula">
-            ${sim.toFixed(3)} + ${stars.toFixed(3)} + ${rec.toFixed(3)} = ${total.toFixed(3)} hybrid score
-          </div>
-        </div>
-      </details>
-    `;
+    const legend = el("div", "score-legend");
+    const item = (label, v, seg) => {
+      const s = el("span");
+      const sw = el("span", "swatch");
+      sw.style.background = `var(--seg${seg})`;
+      s.append(sw, `${label} ${v.toFixed(2)}`);
+      return s;
+    };
+    legend.append(item("Relevance", rel, 1), item("Popularity", pop, 2), item("Recency", rec, 3));
+    legend.appendChild(el("span", "total", `= ${total.toFixed(2)}`));
+    panel.appendChild(legend);
+
+    panel.appendChild(el("p", "hint",
+      "How well it matches what you typed, how starred it is, and how recently it’s been worked on. Change the mix under “Tune ranking”."));
+    return panel;
   }
 
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, c => (
-      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
-    ));
+  /* ---- Guides ----------------------------------------------------------- */
+  function setGuideBtn(btn, label, expanded) {
+    btn.lastChild.textContent = label;
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("aria-expanded", String(expanded));
   }
+
+  function toggleGuide(hit, btn, slot) {
+    if (slot.firstChild) {                     // open or loading -> close/cancel
+      slot.dataset.seq = (+slot.dataset.seq || 0) + 1;   // invalidate in-flight load
+      slot.innerHTML = "";
+      setGuideBtn(btn, "Show me how to use it", false);
+      return;
+    }
+    const known = state.guides[hit.repo_id];
+    if (known) {
+      slot.appendChild(renderGuide(known.md, known.badge, hit));
+      setGuideBtn(btn, "Hide the guide", true);
+      return;
+    }
+    loadGuide(hit, btn, slot);
+  }
+
+  async function loadGuide(hit, btn, slot) {
+    const seq = (+slot.dataset.seq || 0) + 1;
+    slot.dataset.seq = seq;
+    const live = () => +slot.dataset.seq === seq;
+
+    const waiting = el("div", "guide-panel guide-waiting");
+    const dot = el("span", "pulse-dot"); dot.setAttribute("aria-hidden", "true");
+    const headline = el("p", "headline", `Reading ${hit.full_name}’s files…`);
+    waiting.append(dot, headline, el("p", "sub",
+      "We’re writing this from the repo’s actual files — 10 to 20 seconds, one time only. After that it opens instantly."));
+    slot.appendChild(waiting);
+    setGuideBtn(btn, "Reading the repo…", true);
+
+    const stageTimer = setTimeout(() => {
+      if (live()) headline.textContent = "Putting the steps together…";
+    }, 6500);
+
+    try {
+      const resp = await fetch(GUIDE_URL(hit.repo_id));
+      if (!live()) return;
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (!live()) return;
+      const badge = data.cached ? "saved from earlier — opens instantly" : "generated just now";
+      state.guides[hit.repo_id] = { md: data.guide || "", badge };
+      state.guideModel = data.model || state.guideModel;
+      updateAboutTip();
+      slot.innerHTML = "";
+      slot.appendChild(renderGuide(data.guide || "", badge, hit));
+      setGuideBtn(btn, "Hide the guide", true);
+    } catch (err) {
+      if (!live()) return;
+      slot.innerHTML = "";
+      const failed = el("div", "guide-panel guide-failed");
+      failed.append(
+        el("p", "headline", "We couldn’t put the guide together."),
+        el("p", "sub", "The repo’s files didn’t load on our side. This usually passes — try once more."));
+      const retry = el("button", "retry-btn", "Try again");
+      retry.type = "button";
+      retry.addEventListener("click", () => { slot.innerHTML = ""; loadGuide(hit, btn, slot); });
+      failed.appendChild(retry);
+      slot.appendChild(failed);
+      setGuideBtn(btn, "Show me how to use it", true);
+    } finally {
+      clearTimeout(stageTimer);
+    }
+  }
+
+  /* Render the guide's fixed five-section Markdown (## headings, fenced code,
+   * "- " bullets, inline `code` / [links] / **bold**) into DOM nodes. Built
+   * with textContent throughout, so nothing from the guide is parsed as HTML;
+   * link targets are dropped unless they're http(s). */
+  function renderGuide(md, badgeText, hit) {
+    const panel = el("div", "guide-panel guide-open");
+    const head = el("div", "guide-head");
+    head.append(el("span", "guide-eyebrow", "Quick-start guide"), el("span", "guide-badge", badgeText));
+    panel.appendChild(head);
+
+    const sections = md.replace(/\r\n/g, "\n").split(/^## /m).filter(s => s.trim());
+    sections.forEach((sec, i) => {
+      const nl = sec.indexOf("\n");
+      const title = (nl === -1 ? sec : sec.slice(0, nl)).trim();
+      const lines = nl === -1 ? [] : sec.slice(nl + 1).split("\n");
+
+      const section = el("div", "guide-section");
+      const shead = el("div", "guide-section-head");
+      shead.append(
+        el("span", "guide-section-num", String(i + 1).padStart(2, "0")),
+        el("span", "guide-section-title", title));
+      section.appendChild(shead);
+
+      let j = 0;
+      while (j < lines.length) {
+        const line = lines[j];
+        if (line.startsWith("```")) {
+          const buf = [];
+          j++;
+          while (j < lines.length && !lines[j].startsWith("```")) buf.push(lines[j++]);
+          j++;
+          section.appendChild(renderCodeBlock(buf.join("\n")));
+          continue;
+        }
+        if (/^\s*[-*]\s+/.test(line)) {
+          const ul = el("ul");
+          while (j < lines.length && /^\s*[-*]\s+/.test(lines[j])) {
+            const li = el("li");
+            appendInline(li, lines[j].replace(/^\s*[-*]\s+/, ""));
+            ul.appendChild(li);
+            j++;
+          }
+          section.appendChild(ul);
+          continue;
+        }
+        if (!line.trim()) { j++; continue; }
+        const para = [];
+        while (j < lines.length && lines[j].trim() &&
+               !lines[j].startsWith("```") && !/^\s*[-*]\s+/.test(lines[j])) {
+          para.push(lines[j]); j++;
+        }
+        const p = el("p");
+        appendInline(p, para.join(" "));
+        section.appendChild(p);
+      }
+      panel.appendChild(section);
+    });
+
+    panel.appendChild(el("p", "guide-footnote",
+      "Generated from this repo’s files — double-check commands before running."));
+    return panel;
+  }
+
+  function renderCodeBlock(text) {
+    const wrap = el("div", "codeblock");
+    const pre = el("pre");
+    pre.appendChild(el("code", "", text));
+    const copy = el("button", "copy-btn", "Copy");
+    copy.type = "button";
+    copy.addEventListener("click", () => {
+      try { navigator.clipboard.writeText(text); } catch (e) {}
+      copy.textContent = "Copied";
+      setTimeout(() => { copy.textContent = "Copy"; }, 1600);
+    });
+    wrap.append(pre, copy);
+    return wrap;
+  }
+
+  function appendInline(node, text) {
+    const rx = /(`[^`]+`)|\[([^\]]+)\]\(([^)]+)\)|(\*\*[^*]+\*\*)/;
+    let rest = text;
+    while (rest) {
+      const m = rest.match(rx);
+      if (!m) { node.append(rest); break; }
+      if (m.index > 0) node.append(rest.slice(0, m.index));
+      const s = m[0];
+      if (s[0] === "`") {
+        node.appendChild(el("code", "", s.slice(1, -1)));
+      } else if (s[0] === "[") {
+        if (/^https?:\/\//i.test(m[3])) {
+          const a = el("a", "", m[2]);
+          a.href = m[3]; a.target = "_blank"; a.rel = "noopener";
+          node.appendChild(a);
+        } else {
+          node.append(m[2]);
+        }
+      } else {
+        node.appendChild(el("strong", "", s.slice(2, -2)));
+      }
+      rest = rest.slice(m.index + s.length);
+    }
+  }
+
+  /* ---- Misc ------------------------------------------------------------- */
+  function updateAboutTip() {
+    els.about.title =
+      `Search runs on the ${state.searchModel || "bge-small-en-v1.5"} embedding model. ` +
+      `Guides are written by ${state.guideModel || "an AI model"} from each repo’s files.`;
+  }
+
   function fmtStars(n) {
-    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
-    return n;
+    return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
   }
-  function fmtDate(iso) {
-    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-    if (days < 1) return "today";
-    if (days < 30) return `${days}d ago`;
-    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-    return `${Math.floor(days / 365)}y ago`;
+  function fmtUpdated(iso) {
+    const days = Math.floor((Date.now() - Date.parse(iso)) / 864e5);
+    if (days <= 0) return "updated today";
+    if (days === 1) return "updated yesterday";
+    if (days < 30) return `updated ${days} days ago`;
+    const d = new Date(iso);
+    const mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+    const yr = d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : "";
+    return `updated ${mo} ${d.getDate()}${yr}`;
   }
 </script>
 </body>

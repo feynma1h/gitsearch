@@ -15,7 +15,7 @@ repositories ranked by how well they match — combining semantic relevance,
 popularity, and recency. Click any result for a short, generated
 step-by-step guide to actually using that repo.
 
-The corpus is ~280,000 repositories crawled, ~20,000 fully indexed with
+The corpus is ~267,000 repositories crawled, ~244,000 fully indexed with
 embeddings. Warm queries return in ~30 ms; the first request after an idle
 period takes ~15 s because the search service scales to zero when unused.
 

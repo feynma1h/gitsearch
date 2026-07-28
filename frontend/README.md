@@ -3,7 +3,9 @@
 A single-file HTML/JS UI for the search service.
 
 No build step. No framework. One `index.html` that loads in any
-browser and talks to the search service via `fetch()`.
+browser and talks to the search service via `fetch()`. The visual
+design comes from a Claude Design treatment (source kept in
+[`docs/design/`](../docs/design/)), ported here by hand.
 
 ## Run locally
 
@@ -17,42 +19,71 @@ python -m http.server 3000
 # open http://localhost:3000
 ```
 
-The page assumes the search service is at `http://localhost:8002`.
-To point it elsewhere — e.g. a deployed search service — set the
-override before the page loads. The simplest way is a tiny tag in
-the HTML:
+The page defaults to the deployed search service (the Cloud Run URL
+hard-coded near the top of the `<script>` block). To point it
+elsewhere — e.g. a local search service — set the override before
+the main script runs, with a tiny tag in the HTML:
 
 ```html
-<script>window.GITSEARCH_API_URL = "https://search.example.com";</script>
+<script>window.GITSEARCH_API_URL = "http://localhost:8002";</script>
 ```
 
-inserted before the existing `<script>` block.
+inserted anywhere before the existing `<script>` block. Note the
+deployed service only allows browser requests from the origins in
+its `ALLOWED_ORIGINS` env var, so a local page talking to the
+deployed API will be blocked by CORS — run a local search service,
+or test against your own deployment.
 
 ## Deploy
 
 Drop `index.html` on any static host: Vercel, Netlify, Cloudflare
 Pages, GitHub Pages, S3+CloudFront. Free tier on any of them is
-enough.
-
-If your search service is on a different origin (it almost always
-will be in production), set `ALLOWED_ORIGINS` on the search service
-to your frontend's deployed origin so the browser permits the
-cross-origin POST. The default is `*`, fine for local dev but worth
-narrowing in production.
+enough. Set `ALLOWED_ORIGINS` on the search service to the
+frontend's deployed origin.
 
 ## What the UI does
 
-- Search input + submit (Enter also submits).
-- Optional filters: language, min stars, exclude archived.
-- Disclosure-toggled "Tune scoring" panel with three sliders for the
-  similarity / stars / recency weights. Useful for demoing how the
-  hybrid score works — set stars to 0 to see pure semantic search.
-- Example chips on first load (clickable, populate the search box
-  and submit).
-- Each result shows: full name (links to GitHub), description,
-  language, star count, last-updated, similarity score, hybrid
-  score, top 5 topics.
-- Dark mode follows system preference.
+- One page, five phases: first visit (hero + example searches),
+  waiting, results, no matches, error. The wordmark resets to the
+  first-visit view.
+- Search box with `/` to focus and `Esc` to clear. Quiet filters:
+  language, minimum stars, hide archived. A "Tune ranking" panel
+  with three weight sliders (relevance / popularity / recency);
+  changing any filter or weight re-runs the current search
+  server-side.
+- **Honest waits.** The API scales to zero, so the first search
+  after an idle spell takes ~15 s. If a first search is genuinely
+  slow, the skeleton swaps to a staged "waking up the engine"
+  explainer. Warm searches just show skeletons.
+- Results are cards: avatar (falls back to an initial if GitHub's
+  image fails), name, description, language dot, stars, last
+  updated, top-5 topics.
+- **"Show me how to use it"** — the per-repo quick-start guide, the
+  page's signature feature. First generation for a repo takes
+  ~10–20 s (the server reads the repo's files) with narrated
+  progress; afterwards it's served from cache and opens instantly.
+  Rendered as a numbered five-section recipe card with copy buttons
+  on code blocks and a "double-check commands" footnote. The
+  Markdown renderer is deliberately minimal (headings, fenced code,
+  bullets, inline code/links/bold), builds DOM via `textContent`
+  (no HTML injection), and drops non-http(s) link targets.
+- **"Why this rank?"** — per-result score breakdown: stacked bar of
+  the three weight-multiplied components (they sum to the hybrid
+  score) plus a plain-language explainer.
+- Light and dark themes. Follows the system until the user toggles;
+  the explicit choice persists in `localStorage`. Both palettes are
+  designed, not inverted.
+- Layout-shift discipline (status line has fixed height, skeletons
+  match card geometry), `prefers-reduced-motion` support, one
+  webfont (Newsreader, headings only).
+
+### Example searches are load-bearing
+
+Every example chip was verified against the live corpus (top-3
+results checked for quality). Plausible-sounding queries can return
+bad results — "turn markdown into a website" returns converters in
+the *reverse* direction — so don't add or reword chips without
+re-verifying them against the deployed API.
 
 ## What it deliberately doesn't do
 
@@ -61,5 +92,5 @@ narrowing in production.
 - No accounts, no saved searches, no history. Out of scope.
 - No build step or `node_modules`. If this UI's needs ever grow
   beyond what one HTML file can hold, port it to Next.js / Astro /
-  whatever — the API contract is just `POST /search`, so the port
-  is mechanical.
+  whatever — the API contract is just `POST /search` and
+  `GET /guide/{repo_id}`, so the port is mechanical.
