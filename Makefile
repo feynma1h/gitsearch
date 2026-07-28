@@ -94,13 +94,35 @@ index: ## Embed repos and write to repository_embeddings. Resumable.
 audit: ## Read-only report: what's uploaded vs still pending in each stage.
 	cd $(CURDIR) && $(PYTHON) scripts/audit_corpus.py
 
+# --- HNSW build tuning ----------------------------------------------------
+# The graph must fit in maintenance_work_mem or the build falls back to a
+# disk-merge phase that small hosted instances effectively never finish.
+# 768MB holds the full corpus (~244K x 384-dim) and is safe on a 2GB
+# instance; on a 1GB instance pass HNSW_MAINTENANCE_WORK_MEM=512MB and
+# expect a much slower build (or temporarily bump the instance size).
+HNSW_MAINTENANCE_WORK_MEM ?= 768MB
+# Index DDL runs for minutes and relies on session-scoped SETs, so it needs
+# a session-mode connection. On Supabase that's pooler port 5432 — the
+# transaction pooler on 6543 (what DATABASE_URL normally uses) drops SETs
+# between statements and enforces a statement timeout that kills the build.
+# The subst is a no-op when DATABASE_URL isn't on 6543 (e.g. local compose).
+HNSW_DATABASE_URL ?= $(subst :6543/,:5432/,$(DATABASE_URL))
+
 .PHONY: build-hnsw
-build-hnsw: ## Build the HNSW index *after* bulk embedding finishes.
-	$(PSQL) "$(DATABASE_URL)" -c "\
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_repository_embeddings_hnsw \
-    ON repository_embeddings \
-    USING hnsw (embedding vector_cosine_ops) \
-    WITH (m = 16, ef_construction = 64);"
+build-hnsw: ## (Re)build the HNSW index after bulk embedding. Search stays up but slow (unindexed) while it runs.
+	# A cancelled/failed CONCURRENTLY build leaves an INVALID index that
+	# IF NOT EXISTS would silently keep, so always drop and build fresh.
+	# Serial build (parallel workers need shared memory hosted instances
+	# don't provide, and the serial in-memory build is already fast).
+	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
+		-c "SET statement_timeout = 0;" \
+		-c "SET maintenance_work_mem = '$(HNSW_MAINTENANCE_WORK_MEM)';" \
+		-c "SET max_parallel_maintenance_workers = 0;" \
+		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw;" \
+		-c "CREATE INDEX CONCURRENTLY idx_repository_embeddings_hnsw \
+	        ON repository_embeddings \
+	        USING hnsw (embedding vector_cosine_ops) \
+	        WITH (m = 16, ef_construction = 64);"
 
 # ---------------------------------------------------------------------------
 # Long-lived services (when running from the host, not docker compose)
