@@ -37,6 +37,10 @@ logs/
 # Local eval runs (the harness suggests writing to runs/)
 search/eval/runs/
 
+# ─── One-off audit artifacts (session working files, not repo material) ──
+reconciliation.json
+shard_audit.ipynb
+
 # ─── Editors ─────────────────────────────────────────────────────────────
 .vscode/
 .idea/

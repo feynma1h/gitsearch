@@ -75,8 +75,9 @@ class ReadmeClient:
         """Fetch the README for one repo. Never raises on per-repo failures.
 
         Returns a :class:`ReadmeResult` with the status to record. Transient
-        errors (network, 5xx) are retried internally; if they exhaust retries
-        the result is ``status='error'`` so the caller can move on.
+        errors (network, 5xx) and rate limits (403/429) are retried
+        internally; if non-rate-limit retries are exhausted the result is
+        ``status='error'`` so the caller can move on.
         """
         url = f"{self.BASE_URL}/repos/{owner}/{repo}/readme"
         headers = {
@@ -105,6 +106,11 @@ class ReadmeClient:
                             status="not_found",
                             error_detail="451 unavailable for legal reasons",
                         )
+
+                    if resp.status in (403, 429) and await self._is_rate_limit(resp):
+                        # Not a per-repo failure — don't record readme_fetched_at.
+                        last_error = f"HTTP {resp.status}: rate limited"
+                        continue
 
                     if resp.status in _RETRY_STATUSES:
                         last_error = f"HTTP {resp.status}"
@@ -135,6 +141,32 @@ class ReadmeClient:
         if parsed is not None:
             remaining, reset_at = parsed
             await self._limiter.update(remaining, reset_at)
+
+    async def _is_rate_limit(self, resp: aiohttp.ClientResponse) -> bool:
+        """Detect a rate-limit 403/429 and wait out its reset in place.
+
+        GitHub signals two distinct kinds: a secondary/abuse limit, which
+        carries an explicit ``Retry-After`` header, and the primary hourly
+        quota, exposed as ``X-RateLimit-Remaining: 0`` (already recorded on
+        the shared limiter by ``_update_limiter`` above). Returns True if
+        this was a rate limit — the caller should retry the same request —
+        or False for a genuine per-repo 403 (e.g. permission denied).
+        """
+        retry_after = resp.headers.get("Retry-After")
+        if retry_after is not None:
+            try:
+                wait_s = float(retry_after)
+            except ValueError:
+                wait_s = 60.0
+            await asyncio.sleep(wait_s + 1.0)
+            return True
+
+        parsed = parse_rest_rate_limit(resp.headers)
+        if parsed is not None and parsed[0] == 0:
+            await self._limiter.wait_if_needed()
+            return True
+
+        return False
 
     async def _decode_payload(
         self,

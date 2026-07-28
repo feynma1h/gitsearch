@@ -18,11 +18,18 @@ logger = logging.getLogger(__name__)
 
 
 async def create_pool() -> asyncpg.Pool:
-    """Create the shared connection pool."""
+    """Create the shared connection pool.
+
+    ``statement_cache_size=0`` because ``DATABASE_URL`` now points at a
+    transaction-mode pooler — see ``crawler/src/db.py`` for the full
+    reasoning.
+    """
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
         raise RuntimeError("DATABASE_URL is not set.")
-    return await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=10)
+    return await asyncpg.create_pool(
+        dsn=dsn, min_size=2, max_size=10, statement_cache_size=0,
+    )
 
 
 # Pending = repos in `repositories` with no embedding row for this model yet.

@@ -13,14 +13,31 @@ logger = logging.getLogger(__name__)
 
 
 async def create_pool() -> asyncpg.Pool:
-    """Create the shared connection pool. Reads ``DATABASE_URL`` from env."""
+    """Create the shared connection pool. Reads ``DATABASE_URL`` from env.
+
+    Expects a transaction-mode pooler DSN (Supabase port 6543, not 5432's
+    session mode). Session mode holds a client's slot for the life of the
+    connection, and a non-graceful exit (crash, Ctrl-C) can strand it until
+    the project is restarted; transaction mode has no such failure mode.
+    ``statement_cache_size=0`` is required under transaction-mode pooling:
+    asyncpg's server-side prepared statements are pinned to one physical
+    backend, which a transaction pooler doesn't guarantee across calls.
+    Override pool size with ``DB_POOL_MAX_SIZE`` if needed.
+    """
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
         raise RuntimeError(
             "DATABASE_URL is not set. "
-            "Example: postgresql://user:pass@localhost:5432/crawler"
+            "Example: postgresql://user:pass@host:6543/postgres"
         )
-    return await asyncpg.create_pool(dsn=dsn, min_size=5, max_size=20)
+    max_size = int(os.getenv("DB_POOL_MAX_SIZE", "10"))
+    min_size = min(2, max_size)
+    return await asyncpg.create_pool(
+        dsn=dsn,
+        min_size=min_size,
+        max_size=max_size,
+        statement_cache_size=0,
+    )
 
 
 _INSERT_SQL = """

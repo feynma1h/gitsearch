@@ -90,6 +90,10 @@ readmes: ## Fetch READMEs for the top-N repos. Resumable. Defaults to top 20K.
 index: ## Embed repos and write to repository_embeddings. Resumable.
 	cd indexer && $(PYTHON) -m pipeline.main --top-n 20000
 
+.PHONY: audit
+audit: ## Read-only report: what's uploaded vs still pending in each stage.
+	cd $(CURDIR) && $(PYTHON) scripts/audit_corpus.py
+
 .PHONY: build-hnsw
 build-hnsw: ## Build the HNSW index *after* bulk embedding finishes.
 	$(PSQL) "$(DATABASE_URL)" -c "\

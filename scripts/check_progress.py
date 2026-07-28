@@ -33,7 +33,8 @@ _QUERIES = {
     "index": """
         SELECT COUNT(*) FROM repositories r
         LEFT JOIN repository_embeddings e ON e.repo_id = r.id
-        WHERE r.readme_status = 'success'
+        WHERE r.readme_status IS NOT NULL
+          AND r.is_archived = FALSE
           AND e.repo_id IS NULL
     """,
 }
@@ -44,7 +45,7 @@ _REPORT_QUERY = """
         (SELECT COUNT(*) FROM repositories
          WHERE readme_status IS NOT NULL) AS readme_attempted,
         (SELECT COUNT(*) FROM repositories
-         WHERE readme_status = 'success') AS readme_success,
+         WHERE readme_status = 'ok') AS readme_success,
         (SELECT COUNT(*) FROM repository_embeddings) AS embeddings,
         (SELECT MAX(crawled_at) FROM repositories) AS last_crawled_at
 """
@@ -52,7 +53,7 @@ _REPORT_QUERY = """
 
 async def _probe(stage: str) -> int:
     dsn = os.environ["DATABASE_URL"]
-    conn = await asyncpg.connect(dsn)
+    conn = await asyncpg.connect(dsn, statement_cache_size=0)
     try:
         if stage == "report":
             row = await conn.fetchrow(_REPORT_QUERY)

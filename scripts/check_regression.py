@@ -26,14 +26,14 @@ _CURRENT_COUNTS = """
     SELECT
         (SELECT COUNT(*) FROM repositories)                      AS total_repos,
         (SELECT COUNT(*) FROM repositories
-         WHERE readme_status = 'success')                        AS readme_success,
+         WHERE readme_status = 'ok')                             AS readme_success,
         (SELECT COUNT(*) FROM repository_embeddings)             AS embeddings
 """
 
 
 async def _check() -> int:
     dsn = os.environ["DATABASE_URL"]
-    conn = await asyncpg.connect(dsn)
+    conn = await asyncpg.connect(dsn, statement_cache_size=0)
     try:
         current = await conn.fetchrow(_CURRENT_COUNTS)
         prev = await conn.fetchrow("SELECT * FROM refresh_watermarks WHERE id = 1")
