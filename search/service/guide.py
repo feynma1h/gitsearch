@@ -89,8 +89,9 @@ Ground every step in the README or a file you actually read. Do NOT invent \
 install or run commands they don't support — if a section isn't covered, say \
 so plainly (for example, "The repository doesn't document this.") and \
 continue. If a tool call fails or your tool budget runs out, write the guide \
-from what you have. Be concise: no preamble, no closing remarks, just the \
-five sections."""
+from what you have. Your final message is published verbatim as the guide: it \
+must START with `## What it is` and contain ONLY the five sections — no \
+narration about your exploration, no "Let me...", no closing remarks."""
 
 
 _TOOLS = [
@@ -157,10 +158,19 @@ def _build_user_message(repo: RepoForGuide) -> str:
 
 
 def _text_of(message: Any) -> str:
-    """The concatenated text blocks of a response, or raise if empty."""
+    """The concatenated text blocks of a response, or raise if empty.
+
+    Small models sometimes narrate before the guide ("Let me write it
+    up..."), especially after a tool loop. The format is fixed, so anything
+    before the first section heading is provably not guide content — trim
+    it rather than cache it.
+    """
     text = "".join(
         block.text for block in message.content if block.type == "text"
     ).strip()
+    start = text.find("## What it is")
+    if start > 0:
+        text = text[start:]
     if not text:
         raise GuideGenerationError("model returned no text")
     return text

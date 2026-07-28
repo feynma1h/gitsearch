@@ -214,6 +214,17 @@ async def test_agentic_budget_forces_final_answer():
     assert all("tool_choice" not in c for c in client.messages.calls[:-1])
 
 
+async def test_preamble_before_first_heading_is_trimmed():
+    # Small models sometimes narrate before the guide; only the fixed
+    # five-section body may be cached.
+    client = _FakeClient(_Message([
+        _Block("Perfect! Let me write the guide now.\n\n## What it is\nA lib."),
+    ]))
+    guide = await generate_guide(client, _repo())
+    assert guide.startswith("## What it is")
+    assert "Perfect!" not in guide
+
+
 async def test_agentic_api_error_wrapped():
     browser = _FakeBrowser()
     client = _FakeClient([
