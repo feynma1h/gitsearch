@@ -89,11 +89,17 @@ class SearchHit:
 
 async def create_pool() -> asyncpg.Pool:
     """Create the shared connection pool. Uses the same DATABASE_URL env
-    var as the crawler and indexer."""
+    var as the crawler and indexer.
+
+    ``statement_cache_size=0`` so the pool is safe behind either pooler
+    mode — see ``crawler/src/db.py`` for the full reasoning.
+    """
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
         raise RuntimeError("DATABASE_URL is not set.")
-    return await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=10)
+    return await asyncpg.create_pool(
+        dsn=dsn, min_size=2, max_size=10, statement_cache_size=0,
+    )
 
 
 # ---------------------------------------------------------------------------
