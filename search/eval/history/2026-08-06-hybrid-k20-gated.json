@@ -1,5 +1,5 @@
 {
- "system": "hybridB-k20",
+ "system": "hybrid-k20-gated",
  "date": "2026-08-06",
  "service_url": "http://localhost:8002",
  "queries_file": "eval/queries_v2.json",
@@ -4408,5 +4408,6 @@
    "Stirling-Tools/Stirling-PDF",
    "microfeed/microfeed"
   ]
- }
+ },
+ "_note": "Captured from the local service during the phase-1 sweep. A later topics-only coverage experiment briefly shipped under a similar label but was never validly measured (a stale local process served the sweep) and was reverted; this file is the any-field-coverage candidate the gate numbers in ADR 0018 were computed on."
 }

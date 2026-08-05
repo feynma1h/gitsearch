@@ -39,24 +39,20 @@ FTS_LANE_LIMIT: int = 200     # weighted tsvector, websearch_to_tsquery
 DENSE_LANE_LIMIT: int = 200   # halfvec HNSW KNN
 NAME_LANE_LIMIT: int = 50     # pg_trgm exact/prefix/fuzzy on repo name
 
-# The FTS lane orders matches by (curated-term coverage, stars):
-# primary key = how many distinct query terms appear in the repo's
-# TOPICS + PRIMARY LANGUAGE (tsvector weight B), secondary = star
-# count within each coverage tier. This is GitHub's own ordering
-# insight ("show popular repos before a random match in a
-# long-forgotten repository") applied per coverage class. Two broader
-# signals measurably failed here: cover-density ranking put pytorch at
-# rank ~1800 for "machine learning framework python" (repos named
-# like the query win), and counting coverage across name/description
-# too let boilerplate descriptions overflow the lane's full-coverage
-# tier (~350 repos "cover" that query somewhere; only 49 cover it in
-# topics, and the canonical repos sit directly under them by stars).
-# Popularity still never gates recall: it orders within the lane,
-# membership stays purely lexical (any two terms in the light fields,
-# or a full websearch match incl. README), and descriptions keep
-# ranking weight through the dense lane, which embeds them. Coverage
-# is computed against this many pre-bound single-lexeme slots; longer
-# queries count only their first 8 content lexemes.
+# The FTS lane orders matches by (term coverage, stars): primary key =
+# how many distinct query terms appear in the repo's light fields
+# (name, topics, language, description — the README-free tsvector),
+# secondary = star count within each coverage tier. This is GitHub's
+# own ordering insight ("show popular repos before a random match in a
+# long-forgotten repository") applied per coverage class: cover-density
+# ranking measurably failed here (it put pytorch at rank ~1800 for
+# "machine learning framework python" because repos *named* like the
+# query win on density). A topics-only coverage variant also failed —
+# see coverage_slots() in db.py. Popularity never gates recall: it
+# orders within the lane, membership stays purely lexical (any two
+# terms in the light fields, or a full websearch match incl. README).
+# Coverage is computed against this many pre-bound single-lexeme
+# slots; longer queries count only their first 8 content lexemes.
 FTS_COVERAGE_SLOTS: int = 8
 # The fuzzy trigram arm of the name lane only fires for queries of at
 # most this many words: typos people type are short ("pytorhc"), and

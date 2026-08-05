@@ -399,18 +399,17 @@ def coverage_slots(lexemes: List[str]) -> List[str]:
     the first FTS_COVERAGE_SLOTS content lexemes, quoted, padded with
     empty tsqueries (which match nothing).
 
-    Each is weight-restricted to :B — topics + primary language, the
-    curated category vocabulary. Tiering on all fields let description
-    boilerplate inflate coverage: for "machine learning framework
-    python", ~350 repos carry all four terms *somewhere* (mostly
-    "framework" in a sales-pitch description), overflowing the lane
-    before the canonical tier; restricted to topics/language, the
-    full-coverage tier is 49 repos and tensorflow/pytorch/scikit-learn
-    sit directly under it by stars. Descriptions still gate lane
-    membership and still feed the dense lane's embeddings — they just
-    don't out-tier curated topics."""
+    Coverage counts a term present in ANY light field (name, topics,
+    language, description). A topics/language-only restriction
+    (':B'-labelled slots) was tried and reverted: it promotes repos
+    whose topics happen to enumerate every query word — for "machine
+    learning framework python" the topic-complete tier is 49 repos of
+    mostly minor frameworks, which pushed tensorflow (topics lack
+    "framework"; description has it) out of the top ten entirely. The
+    eval gate was measured on any-field coverage; this stays what was
+    measured."""
     slots = [
-        "'" + lexeme.replace("'", "") + "':B"
+        "'" + lexeme.replace("'", "") + "'"
         for lexeme in lexemes[:FTS_COVERAGE_SLOTS]
     ]
     return slots + [""] * (FTS_COVERAGE_SLOTS - len(slots))

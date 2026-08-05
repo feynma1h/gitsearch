@@ -14,25 +14,32 @@ from service.db import (
 )
 
 
-def test_coverage_slots_are_b_weighted_and_padded() -> None:
+def test_coverage_slots_quoted_and_padded() -> None:
     slots = coverage_slots(["machin", "learn"])
-    assert slots[0] == "'machin':B"
-    assert slots[1] == "'learn':B"
+    assert slots[0] == "'machin'"
+    assert slots[1] == "'learn'"
     assert slots[2:] == [""] * (FTS_COVERAGE_SLOTS - 2)
     assert len(slots) == FTS_COVERAGE_SLOTS
+
+
+def test_coverage_slots_count_any_field() -> None:
+    # No weight labels: coverage counts a term in ANY light field. A
+    # topics-only (:B) restriction was reverted — see coverage_slots()
+    # — so a reappearing ':B' here is a regression, not a cleanup.
+    assert all(":B" not in s for s in coverage_slots(["machin", "learn"]))
 
 
 def test_coverage_slots_truncate_long_queries() -> None:
     lexemes = [f"lex{i}" for i in range(FTS_COVERAGE_SLOTS + 3)]
     slots = coverage_slots(lexemes)
     assert len(slots) == FTS_COVERAGE_SLOTS
-    assert slots[-1] == f"'lex{FTS_COVERAGE_SLOTS - 1}':B"
+    assert slots[-1] == f"'lex{FTS_COVERAGE_SLOTS - 1}'"
 
 
 def test_coverage_slots_strip_quotes() -> None:
     # A lexeme can't legitimately contain a quote, but the slot text is
     # spliced into tsquery literals — never allow one through.
-    assert coverage_slots(["o'brien"])[0] == "'obrien':B"
+    assert coverage_slots(["o'brien"])[0] == "'obrien'"
 
 
 def test_fuzzy_gate_allows_short_queries_only() -> None:

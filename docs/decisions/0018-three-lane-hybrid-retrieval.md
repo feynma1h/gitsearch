@@ -56,21 +56,23 @@ and see identical WHERE filters:
    Lane membership = any-two-terms in the light fields (pairwise-AND
    expansion; single-term for one-word queries) OR a full websearch
    match; lane order = **(term coverage, stars)** — how many distinct
-   query terms the repo's topics + primary language cover, then
-   popularity within each coverage tier. Top 200. Two designs died on
-   measurement before this one: cover-density ranking (`ts_rank_cd`,
-   any weighting) puts the canonical repos at ranks 267–1804 for
-   "machine learning framework python" because low-star repos carry
-   the query as their literal name, and README-inclusive membership at
-   OR breadth visits ~66K heap tuples (~3 s/query on Micro compute).
-   Coverage-tiering fixed the ranks (pytorch 1804 → 52); the light
-   column fixed the cost (the whole statement: 38 ms server-side).
-   Restricting the coverage *count* to topics/language rather than all
-   light fields measurably changed almost nothing further (1 of 200
-   queries) — kept anyway as cheap insurance against
-   description-boilerplate tier inflation. Coverage-tiering is
-   GitHub's own ordering insight applied per tier; topics carry
-   exactly the category vocabulary ("machine-learning",
+   query terms the light fields cover, then popularity within each
+   coverage tier. Top 200. Two designs died on measurement before
+   this one: cover-density ranking (`ts_rank_cd`, any weighting) puts
+   the canonical repos at ranks 267–1804 for "machine learning
+   framework python" because low-star repos carry the query as their
+   literal name, and README-inclusive membership at OR breadth visits
+   ~66K heap tuples (~3 s/query on Micro compute). Coverage-tiering
+   fixed the ranks (pytorch 1804 → ~52); the light column fixed the
+   cost (the whole statement: 38 ms server-side). A third variant —
+   counting coverage over topics + language only — was tried, briefly
+   shipped, and reverted the same day: it hands the top tier to repos
+   whose topics enumerate every query word (49 mostly-minor frameworks
+   for the gate query) and dropped tensorflow, whose "framework" lives
+   in its description, out of the top ten. What production runs is
+   exactly the any-field-coverage variant the eval gate measured.
+   Coverage-tiering is GitHub's own ordering insight applied per tier;
+   topics carry exactly the category vocabulary ("machine-learning",
    "vector-database") that canonical repos' descriptions lack, and the
    corpus probe showed topics made every eval-category canonical repo
    lexically matchable.
