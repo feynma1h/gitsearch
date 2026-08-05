@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gitsearch — find GitHub repos by what they do</title>
 <meta name="description" content="Describe what you need in plain English and gitsearch finds the GitHub repos that do it — searching 250,000 repositories by what they do, with a quick-start guide for every result.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='4' y='24' font-family='Georgia,serif' font-weight='600' font-size='22' fill='%23211C15'%3Eg%3C/text%3E%3Ccircle cx='24' cy='22' r='3' fill='%23B34D28'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='4' y='24' font-family='Georgia,serif' font-weight='600' font-size='22' fill='%23211C15'%3Eg%3C/text%3E%3Ccircle cx='24' cy='22' r='3' fill='%23211C15'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..700&display=swap" rel="stylesheet">
@@ -25,16 +25,16 @@
   :root { color-scheme: light dark; }
   body {
     --bg:#FAF7F1; --card:#FFFFFF; --ink:#211C15; --ink2:#5D5446; --ink3:#766B59;
-    --line:#E3DACB; --line2:#EFE8DB; --accent:#9A5B33; --accent-strong:#B34D28;
+    --line:#E3DACB; --line2:#EFE8DB; --accent:#4A4238; --accent-strong:#211C15;
     --chip:#F3EDE2; --guide-bg:#FBF7EE; --code-bg:#26201A; --code-ink:#EDE5D6;
-    --seg1:#B65C34; --seg2:#C99A3A; --seg3:#7B8B5E; --err:#A3422E;
+    --seg1:#6B5F4F; --seg2:#C99A3A; --seg3:#7B8B5E; --err:#A3422E; --cta-ink:#FFF7EE;
     --shadow:rgba(80,60,30,.07);
   }
   body[data-th="dark"] {
     --bg:#171310; --card:#211B15; --ink:#EDE5D6; --ink2:#C2B6A4; --ink3:#9A8E7D;
-    --line:#372F26; --line2:#2A241D; --accent:#D89468; --accent-strong:#E0794A;
+    --line:#372F26; --line2:#2A241D; --accent:#C9BFB0; --accent-strong:#EDE5D6;
     --chip:#2B241C; --guide-bg:#251F18; --code-bg:#100D0A; --code-ink:#E5DCCB;
-    --seg1:#C97A4E; --seg2:#CBA24A; --seg3:#8FA075; --err:#E07A5F;
+    --seg1:#A89C8A; --seg2:#CBA24A; --seg3:#8FA075; --err:#E07A5F; --cta-ink:#211C15;
     --shadow:rgba(0,0,0,.25);
   }
 
@@ -110,7 +110,7 @@
   }
   @media (hover: none) { .kbd-hint { display: none; } }
   .search-go {
-    background: var(--accent-strong); color: #FFF7EE; border: none; border-radius: 9px;
+    background: var(--accent-strong); color: var(--cta-ink); border: none; border-radius: 9px;
     font-size: 14px; font-weight: 600; padding: 0 16px; height: 40px;
   }
 
