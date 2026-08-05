@@ -65,6 +65,10 @@ DEFAULT_EMBEDDING_SERVICE_URL: str = "http://localhost:8001"
 # first-search-after-idle fail at the timeout). 75s matches the
 # frontend's own request budget; warm requests still complete in
 # ~25-40ms, so a generous ceiling costs nothing on the happy path.
+# NOTE: Cloud Run's service-level request timeout must exceed this —
+# a 30s platform cap was silently 504-ing every cold search at 30.0s
+# no matter what this value said (raised to 90s on 2026-08-05; future
+# `gcloud run deploy` calls inherit it unless --timeout overrides).
 EMBEDDING_TIMEOUT_SECONDS: float = 75.0
 
 # One retry is enough — if two attempts within the budget haven't

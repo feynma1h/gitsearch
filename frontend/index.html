@@ -17,7 +17,7 @@
      - Plain language on the surface; scoring machinery behind disclosures.
      - Theme: follows system preference until the user toggles; the choice
        persists in localStorage. body[data-th] carries the active theme.
-     - Every wait state is designed: cold start (~15s after idle) gets staged
+     - Every wait state is designed: cold start (~40s after idle) gets staged
        messages; first guide generation (~10-20s) narrates what's happening.
      - No layout shift: the status line has fixed height, skeletons match
        final card geometry. prefers-reduced-motion disables all animation. */
@@ -417,7 +417,7 @@
     <div class="centered-panel" id="wait-cold" hidden>
       <span class="pulse-dot" aria-hidden="true"></span>
       <h2 id="cold-title">Waking up the search engine…</h2>
-      <p id="cold-sub">The first search after a quiet spell takes about 15 seconds while the engine starts. After this one, searches take about a second.</p>
+      <p id="cold-sub">The first search after a quiet spell takes about 40 seconds while the engine starts. After this one, searches take about a second.</p>
     </div>
   </div>
 
@@ -593,13 +593,17 @@
 
   const COLD_STAGES = [
     ["Waking up the search engine…",
-     "The first search after a quiet spell takes about 15 seconds while the engine starts. After this one, searches take about a second."],
-    ["Still waking up — nearly there.",
+     "The first search after a quiet spell takes about 40 seconds while the engine starts. After this one, searches take about a second."],
+    ["Still waking up — about halfway.",
      "This only happens on the first search of a visit. Yours will run the moment the engine is awake."],
     ["Almost ready…", "Fetching your results now."],
-    ["Taking longer than usual — retrying for you.",
-     "The engine is still waking up. Your search will run again automatically; nothing to redo."],
+    ["Taking longer than we expected.",
+     "Still at it — your search will run automatically the moment the engine responds. Nothing to redo."],
   ];
+  // Elapsed ms into the wake at which each stage becomes true. The wake
+  // measures ~38s end to end; the last stage is the honesty valve for the
+  // rare wake that overruns the promise.
+  const COLD_STAGE_AT = [2500, 18000, 34000, 55000];
   function coldStage(i) {
     els.waitSkeleton.hidden = true;
     els.waitCold.hidden = false;
@@ -624,17 +628,18 @@
     els.q.value = query;
     showPhase("waiting");
 
-    // The engine sleeps when unused. If this is the visit's first search and
-    // it's genuinely slow, explain the wake-up rather than pulsing silently.
+    // The engine sleeps when unused. Narrate the ~40s wake against one
+    // persistent clock, so stages track real elapsed time and an automatic
+    // retry resumes the story mid-timeline instead of restarting it.
     if (!state.warmed) {
-      if (isAutoRetry) {
-        coldStage(1);
-        after(7000, () => seq === state.searchSeq && coldStage(2));
-      } else {
-        after(2500, () => seq === state.searchSeq && coldStage(0));
-        after(8500, () => seq === state.searchSeq && coldStage(1));
-        after(14000, () => seq === state.searchSeq && coldStage(2));
-      }
+      if (!isAutoRetry || !state.coldT0) state.coldT0 = performance.now();
+      const elapsed = performance.now() - state.coldT0;
+      let current = -1;
+      COLD_STAGE_AT.forEach((at, i) => {
+        if (elapsed >= at) current = i;
+        else after(at - elapsed, () => seq === state.searchSeq && coldStage(i));
+      });
+      if (current >= 0) coldStage(current);
     }
 
     const filters = { exclude_archived: els.arch.getAttribute("aria-pressed") === "true" };
@@ -669,12 +674,11 @@
     } catch (err) {
       if (seq !== state.searchSeq) return;
       clearTimers();
-      // First search of a visit racing the engine's wake-up: retry on our
-      // own (twice, spaced out) before admitting defeat — the manual retry
-      // this replaces almost always succeeded anyway.
-      if (!state.warmed && state.coldRetries < 2) {
+      // First search of a visit racing the engine's wake-up: retry silently —
+      // the wake clock keeps narrating, and a retry is an implementation
+      // detail, not news. Only after the retries are spent does the error show.
+      if (!state.warmed && state.coldRetries < 3) {
         state.coldRetries += 1;
-        coldStage(3);
         after(4000, () => { if (seq === state.searchSeq) doSearch(query, true); });
         return;
       }
