@@ -488,6 +488,7 @@
 
   const state = {
     warmed: false,          // a search has completed this visit (engine is awake)
+    coldRetries: 0,         // automatic retries used while the engine wakes
     lastQuery: "",
     searchSeq: 0,           // invalidates in-flight searches
     searchModel: "",
@@ -596,6 +597,8 @@
     ["Still waking up — nearly there.",
      "This only happens on the first search of a visit. Yours will run the moment the engine is awake."],
     ["Almost ready…", "Fetching your results now."],
+    ["Taking longer than usual — retrying for you.",
+     "The engine is still waking up. Your search will run again automatically; nothing to redo."],
   ];
   function coldStage(i) {
     els.waitSkeleton.hidden = true;
@@ -611,11 +614,12 @@
   });
   els.retry.addEventListener("click", () => doSearch(state.lastQuery || els.q.value));
 
-  async function doSearch(query) {
+  async function doSearch(query, isAutoRetry) {
     query = (query || "").trim();
     if (!query) return;
     clearTimers();
     const seq = ++state.searchSeq;
+    if (!isAutoRetry) state.coldRetries = 0;
     state.lastQuery = query;
     els.q.value = query;
     showPhase("waiting");
@@ -623,9 +627,14 @@
     // The engine sleeps when unused. If this is the visit's first search and
     // it's genuinely slow, explain the wake-up rather than pulsing silently.
     if (!state.warmed) {
-      after(2500, () => seq === state.searchSeq && coldStage(0));
-      after(8500, () => seq === state.searchSeq && coldStage(1));
-      after(14000, () => seq === state.searchSeq && coldStage(2));
+      if (isAutoRetry) {
+        coldStage(1);
+        after(7000, () => seq === state.searchSeq && coldStage(2));
+      } else {
+        after(2500, () => seq === state.searchSeq && coldStage(0));
+        after(8500, () => seq === state.searchSeq && coldStage(1));
+        after(14000, () => seq === state.searchSeq && coldStage(2));
+      }
     }
 
     const filters = { exclude_archived: els.arch.getAttribute("aria-pressed") === "true" };
@@ -660,6 +669,15 @@
     } catch (err) {
       if (seq !== state.searchSeq) return;
       clearTimers();
+      // First search of a visit racing the engine's wake-up: retry on our
+      // own (twice, spaced out) before admitting defeat — the manual retry
+      // this replaces almost always succeeded anyway.
+      if (!state.warmed && state.coldRetries < 2) {
+        state.coldRetries += 1;
+        coldStage(3);
+        after(4000, () => { if (seq === state.searchSeq) doSearch(query, true); });
+        return;
+      }
       showPhase("error");
     }
   }

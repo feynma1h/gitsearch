@@ -3,8 +3,10 @@
 Structurally identical to ``indexer/pipeline/client.py`` — same service,
 same wire format. Three deliberate differences:
 
-  - Tighter timeout (search is user-facing; the indexer is bulk).
-  - Fewer retries (we'd rather fail fast than make the user wait).
+  - Timeout sized to the frontend's request budget, which must cover
+    the embedding service's full cold start (~38s measured).
+  - Fewer retries (the indexer retries harder; here the browser has
+    given up long before a third attempt could matter).
   - Always sends a one-element batch (the user query). ADR 0010
     anticipates this — it's a fine pattern at low QPS, and dynamic
     server-side batching is the documented next step if we ever need
@@ -29,7 +31,9 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-_RETRY_STATUSES = {500, 502, 503, 504}
+# 429 included: Cloud Run returns it when no instance can take the
+# request yet (scale-from-zero); it deserves a retry, not an error.
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 
 class EmbeddingServiceError(Exception):
