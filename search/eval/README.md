@@ -1,82 +1,98 @@
 # Evaluation harness
 
-A small offline harness for measuring search quality. Run on demand
-when tuning weights, swapping the embedding model, or changing the
-indexer's source-document construction.
+Measures search quality well enough to make ship/no-ship decisions.
+Two tiers share one runner:
 
-The harness has one job: hit `POST /search` for each query in
-`queries.json` and report Recall@K and NDCG@K, both per-query and
-aggregate. It is **not** a unit test — it talks to a live service
-over HTTP and prints results for you to read.
+- **Quick regression** (`make eval`): the original 5 hand-labelled
+  queries in `queries.json`, binary Recall@10 / NDCG@10. Seconds to
+  run; catches gross regressions.
+- **Decision-grade** (`queries_v2.json` + friends): 200 stratified
+  queries, LLM-judged pooled qrels, a hand-curated canary suite, and a
+  paired significance test. This is what phase gates run on
+  (ADR 0018 was the first).
 
-## Usage
+Everything here is stdlib-only Python — no extra deps to run an eval.
+(`requirements-dev.txt` installs ir_measures purely so the test suite
+can verify our metric math against trec_eval's.)
+
+## The pieces
+
+| File | What it is |
+| --- | --- |
+| `queries.json` | 5 legacy seeds with inline `relevant` labels. Unchanged, still the `make eval` default. |
+| `queries_v2.json` | 200 queries, stratified: 50 navigational (incl. typos), 75 category, 75 task. No labels inline. |
+| `canary.json` | 50 category queries with hand-picked canonical answers, every repo verified present in the corpus. Judge-independent ground truth; frozen (append-only) after the 2026-08-05 veto pass. |
+| `qrels.json` | Graded (0–3) relevance judgments, pooled from every compared system's top-20, produced by `judge.py`. Append-only. |
+| `run.py` | Runs a query set against a service; saves ranked lists as a *run file*; computes whichever metrics its inputs allow. |
+| `history/` | Frozen run files that a shipped decision was gated on (`runs/` itself is gitignored scratch). |
+| `judge.py` | UMBRELA LLM judge (Gemini by default) over pooled run files → `qrels.json`. |
+| `compare.py` | A/B between two run files: ΔnDCG@10 with a Fisher randomization p-value, recall, canary recall, judged@10, and the ship gate. |
+| `metrics.py` | The metric definitions (graded nDCG, recall@k grade≥2, judged@k, canary recall, significance test). |
+
+## Decision-grade workflow
 
 ```bash
-# 1. Make sure search + embedding services are up and Postgres has
-#    real data.
+# 0. Env: DATABASE_URL (for the judge's doc fetch) and GEMINI_API_KEY
+#    (or OPENAI_API_KEY / ANTHROPIC_API_KEY) — put both in the repo .env.
 
-# 2. Baseline run (uses defaults from queries.json and service config).
-python -m eval.run
+# 1. Capture a run per system you want to compare (top-20 stored for
+#    pooling, metrics reported @10). Against production, pace the
+#    requests — it rate-limits at 30/minute:
+python -m eval.run --service-url https://<prod>.run.app \
+    --queries eval/queries_v2.json --sleep 2.1 \
+    --save-run eval/runs/$(date +%F)-baseline.json --system baseline
 
-# 3. Compare configurations by overriding weights:
-python -m eval.run --weights similarity=1,stars=0,recency=0  # pure semantic
-python -m eval.run --weights similarity=1,stars=0.5,recency=0.3
-python -m eval.run --weights similarity=0.7,stars=0.5,recency=0.2
+#    Against a local instance (start it with SEARCH_RATE_LIMIT raised),
+#    sweeps go wide open:
+python -m eval.run --queries eval/queries_v2.json --concurrency 6 \
+    --weights rrf_k=60 \
+    --save-run eval/runs/$(date +%F)-k60.json --system hybrid-k60
 
-# 4. Save runs as JSON to diff between configurations:
-python -m eval.run --json > runs/baseline.json
-python -m eval.run --weights stars=0,recency=0 --json > runs/no-popularity.json
-diff <(jq .aggregate runs/baseline.json) <(jq .aggregate runs/no-popularity.json)
+# 2. Judge the pool (incremental — only unjudged pairs cost anything;
+#    --dry-run first shows the count and est. cost):
+python -m eval.judge --runs 'eval/runs/*.json' --dry-run
+python -m eval.judge --runs 'eval/runs/*.json'
+
+# 3. Compare + gate:
+python -m eval.compare --baseline eval/runs/...-baseline.json \
+    --candidate eval/runs/...-k60.json --gate
 ```
+
+`--gate` encodes the ADR 0018 ship rule: ΔnDCG@10 ≥ +0.03 at p < 0.05,
+canary recall up, and the release-gate query ("machine learning
+framework python") surfacing pytorch + tensorflow + scikit-learn in the
+top 10. Exit code 2 on failure, so it can guard a deploy.
+
+## Rules that keep the numbers honest
+
+- **Pool before judging.** qrels must contain the union of top-20 from
+  *every* system being compared, or the newer system's unjudged docs
+  score as irrelevant. `judge.py` handles this; the `Judged@10` column
+  in `compare.py` is the alarm (investigate anything under 0.90).
+- **Append-only labels.** Never edit or delete a judgment or a canary
+  entry to make a run look better. Re-judging means a version bump and
+  a full re-judge.
+- **The judge never sees popularity.** Stars are excluded from the
+  passage the judge grades — relevance is the judge's job, ranking
+  popularity is the engine's.
+- **Different model family.** The judge (Gemini) is deliberately not
+  from the family the product pipeline uses (Claude, for guides). If
+  you must fall back to `--provider anthropic`, the caveat belongs in
+  whatever you write up, plus a `--spot-check` pass.
+- **Canary is the drift anchor.** Judge models change; the hand-picked
+  canary labels don't. If judged metrics and canary recall disagree
+  about a change's direction, trust the canary and investigate.
 
 ## Metrics
 
-- **Recall@K** — of the labelled relevant items, how many appeared in
-  top-K. Easy to interpret: `0.6` means we found 60% of the right
-  repos in the top-K results.
-- **NDCG@K** — ranking-aware. Gives more credit for relevant items
-  appearing higher in the list. `1.0` is a perfect ranking;
-  `~0.7` is a reasonable target for a portfolio-quality system.
+- **nDCG@10** (graded, linear gains, trec_eval-compatible) — primary.
+- **Recall@10 (grade ≥ 2)** — of the docs the judge called
+  substantively relevant, how many the system surfaced.
+- **Canary recall@10** — of the hand-picked canonical repos, how many
+  showed up. Immune to judge drift by construction.
+- **Judged@10** — pool-coverage alarm, not a quality metric.
+- **Fisher randomization p** — two-sided, on paired per-query nDCG
+  deltas; the standard IR significance test.
 
-Both metrics treat relevance as binary. A query whose `relevant` list
-is empty contributes `1.0` (vacuously satisfied) so it doesn't drag
-the aggregate down — but you should remove such queries from the set;
-they're not measuring anything.
-
-The default sort in human-readable output is **worst NDCG first**.
-That's deliberate — when tuning, you want to see the queries you're
-failing on, not the easy wins.
-
-## Growing the query set
-
-`queries.json` ships with 5 seeds. Useful query types to add:
-
-- **Specific repo names** that should be #1 (e.g., "redis" → `redis/redis`).
-  These check that the embedder + ranker can handle exact-name lookups,
-  which is a known weak spot of pure dense retrieval.
-- **Conceptual queries** with multiple plausible answers (e.g.,
-  "static site generator", "vector database").
-- **Multi-word phrases** that test compositional understanding ("fast
-  http server in rust" should bias toward Rust HTTP libraries, not
-  generic Rust repos or generic HTTP repos).
-- **Common failure modes** you've fixed before. If you noticed the
-  ranker doing something dumb and tweaked weights to fix it, add a
-  query that catches the regression.
-
-A reasonable target is ~30 queries. The harness runs in a couple of
-seconds per query (one embed call + one DB query), so the whole set
-is under a minute.
-
-## What the harness deliberately does *not* do
-
-- **Doesn't tune weights for you.** Grid search is easy to add (loop
-  over weight combinations, find the best NDCG) but optimising for
-  the labelled set is overfitting unless the set is large and varied.
-  Eyeball the worst queries first.
-- **Doesn't grade relevance.** Binary is enough at this scale. If you
-  later need fine-grained ("perfect / good / okay / bad"), extend
-  `queries.json` with a `relevance` integer per item and update
-  `ndcg_at_k` to use graded gains.
-- **Doesn't measure latency.** `took_ms` is in the search response,
-  but tracking it across runs is a different concern. Add it if a
-  weight change visibly slows things down.
+The default human-readable output sorts worst queries first — when
+tuning, you want to see what you're failing, not the easy wins.

@@ -2,3 +2,6 @@
 pytest>=8.0
 pytest-asyncio>=0.23
 httpx>=0.27  # FastAPI's TestClient depends on httpx for the ASGI transport.
+# Reference implementation for the eval metrics parity test only — the
+# eval harness itself is deliberately stdlib-only (see eval/metrics.py).
+ir_measures>=0.3
