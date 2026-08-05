@@ -52,6 +52,13 @@ migrate: ## Apply all SQL migrations in order (requires psql on host).
 	$(PSQL) "$(DATABASE_URL)" -f sql/0004_refresh_watermarks.sql
 	$(PSQL) "$(DATABASE_URL)" -f sql/0005_crawl_state.sql
 	$(PSQL) "$(DATABASE_URL)" -f sql/0006_repository_guides.sql
+	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0007_search_lanes.sql
+	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0008_search_tsv_light.sql
+
+# 0007/0008 rewrite the repositories table (generated tsvector columns),
+# which runs for minutes — that needs a session-mode connection on
+# Supabase, same reasoning as HNSW_DATABASE_URL below.
+MIGRATE_REWRITE_DATABASE_URL ?= $(subst :6543/,:5432/,$(DATABASE_URL))
 
 .PHONY: migrate-compose
 migrate-compose: ## Apply migrations via the postgres container (no host psql needed).
@@ -61,6 +68,8 @@ migrate-compose: ## Apply migrations via the postgres container (no host psql ne
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0004_refresh_watermarks.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0005_crawl_state.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0006_repository_guides.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0007_search_lanes.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0008_search_tsv_light.sql
 
 .PHONY: reset-db
 reset-db: ## DESTRUCTIVE: drop every project table, then re-apply migrations. Wipes the corpus.
@@ -123,6 +132,36 @@ build-hnsw: ## (Re)build the HNSW index after bulk embedding. Search stays up bu
 	        ON repository_embeddings \
 	        USING hnsw (embedding vector_cosine_ops) \
 	        WITH (m = 16, ef_construction = 64);"
+
+.PHONY: build-hnsw-halfvec
+build-hnsw-halfvec: ## Build the half-precision HNSW expression index the search service queries (ADR 0018). Same recipe as build-hnsw.
+	# Embeddings are L2-normalised (the embedding service passes
+	# normalize_embeddings=True), so inner product ranks identically to
+	# cosine and halfvec_ip_ops is the cheaper operator. The index is on
+	# an expression, so queries must ORDER BY
+	# (embedding::halfvec(384)) <#> $$q::halfvec(384) to use it — which
+	# is exactly what search/service/db.py does.
+	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
+		-c "SET statement_timeout = 0;" \
+		-c "SET maintenance_work_mem = '$(HNSW_MAINTENANCE_WORK_MEM)';" \
+		-c "SET max_parallel_maintenance_workers = 0;" \
+		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw_halfvec;" \
+		-c "CREATE INDEX CONCURRENTLY idx_repository_embeddings_hnsw_halfvec \
+	        ON repository_embeddings \
+	        USING hnsw ((embedding::halfvec(384)) halfvec_ip_ops) \
+	        WITH (m = 16, ef_construction = 64);"
+
+.PHONY: drop-hnsw-fp32
+drop-hnsw-fp32: ## Drop the fp32 HNSW index once halfvec recall parity is verified live. Guarded: run with CONFIRM=yes.
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "This drops idx_repository_embeddings_hnsw (the fp32 HNSW index)."; \
+		echo "Only do this after the halfvec-backed service is live and verified."; \
+		echo "Re-run with: make drop-hnsw-fp32 CONFIRM=yes   (rebuild: make build-hnsw)"; \
+		exit 1; \
+	fi
+	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
+		-c "SET statement_timeout = 0;" \
+		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw;"
 
 # ---------------------------------------------------------------------------
 # Long-lived services (when running from the host, not docker compose)

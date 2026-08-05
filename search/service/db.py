@@ -1,10 +1,31 @@
 """Database access for the search service.
 
-A single function: given a query vector + filters + weights, return the
-top-N repos ranked by hybrid score.
+A single entry point: given a query (text + vector) + filters + weights,
+return the top-N repos ranked by the hybrid blend.
 
-The hybrid scoring math here intentionally mirrors ``ranking.py`` line by
-line. The Python module is the source of truth for what the formula
+Retrieval is three lanes in one SQL statement (ADR 0018):
+
+  1. Full-text — matches any content lexeme in the README-free light
+     fields (``search_tsv_light``: name, topics, language, description)
+     or the full websearch query anywhere including the README
+     (``search_tsv``). Ordered by (term coverage, stars): how many
+     distinct query terms the light fields cover, then popularity
+     within each coverage tier — so for "machine learning framework
+     python" the canonical repos covering 3-4 terms via topics beat
+     low-star repos with the query stuffed into their name or README.
+  2. Dense — pgvector KNN over the halfvec expression index (inner
+     product; embeddings are L2-normalised so the ordering equals
+     cosine). pgvector 0.8 iterative scans keep filtered searches from
+     coming back short.
+  3. Name — pg_trgm exact / prefix / fuzzy on the repo name, so typos
+     ("pytorhc") and half-remembered names still land (the fuzzy arm
+     only fires for short queries; typos are short).
+
+The lanes are fused with weighted Reciprocal Rank Fusion, then the
+final ordering applies the additive blend + exact-name-first rule.
+
+The scoring math here intentionally mirrors ``ranking.py`` term by
+term. The Python module is the source of truth for what the formula
 *means*; this module is the source of truth for how it executes
 efficiently in Postgres. They must stay in sync — any change to the
 formula touches both files. The tests in ``tests/test_ranking.py`` pin
@@ -14,29 +35,39 @@ discipline.
 Why compute the score in SQL rather than Python:
   - One round trip vs. two (fetch candidates, then re-fetch full rows).
   - Postgres can ORDER BY the computed score and LIMIT in one pass.
-  - Top-N is small enough that re-ranking in Python would be cheap, but
-    the DB is already there; no win to splitting.
+  - The same WHERE filters must apply to every lane *and* the re-rank;
+    one statement removes the chance of those drifting.
 
-See ADR 0013 for the full rationale.
+See ADR 0018 (and 0013 for the history this supersedes).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import List, Optional
 
 import asyncpg
 
 from .config import (
-    DEFAULT_OVERFETCH_MAX,
-    DEFAULT_OVERFETCH_MIN,
-    DEFAULT_OVERFETCH_MULTIPLIER,
+    DEMOTION_ARCHIVED,
+    DEMOTION_FORK,
+    DENSE_LANE_LIMIT,
+    EMBEDDING_DIM,
+    FTS_COVERAGE_SLOTS,
+    FTS_LANE_LIMIT,
     HNSW_EF_SEARCH,
     MODEL_NAME,
+    NAME_FUZZY_MAX_TOKENS,
+    NAME_LANE_LIMIT,
+    RECENCY_FLOOR,
+    STARS_PIVOT_MAX,
+    STARS_PIVOT_MIN,
+    TRGM_SIMILARITY_THRESHOLD,
 )
-from .ranking import LOG_STARS_DENOMINATOR, ScoringWeights
+from .ranking import LaneWeights, ScoringWeights
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +78,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SearchFilters:
-    """Optional filters applied as SQL WHERE conditions.
+    """Optional filters applied as SQL WHERE conditions in every lane.
 
     Each field is None to mean "don't filter on this." Empty lists also
     mean "don't filter" — an explicit empty topic list shouldn't filter
@@ -61,12 +92,14 @@ class SearchFilters:
 
 @dataclass(frozen=True)
 class SearchHit:
-    """One result row, in the order ``ORDER BY hybrid_score DESC``.
+    """One result row, in final display order.
 
     The three ``*_contribution`` fields are the per-component additions
-    to ``hybrid_score`` (already weight-multiplied), exposed so the UI
-    can show *why* a result ranked where it did. Their sum equals
-    ``hybrid_score``.
+    to ``hybrid_score`` (already weight-multiplied and demotion-scaled),
+    exposed so the UI can show *why* a result ranked where it did. Their
+    sum equals ``hybrid_score``. ``similarity`` stays the raw cosine
+    similarity for display (0.0 when the repo has no embedding — such
+    repos are reachable through the lexical lanes).
     """
     repo_id: str
     full_name: str
@@ -77,6 +110,7 @@ class SearchHit:
     stars: int
     pushed_at: object  # datetime, but typing it that way pulls in datetime import here
     similarity: float
+    exact_name: bool
     hybrid_score: float
     similarity_contribution: float
     stars_contribution: float
@@ -106,88 +140,222 @@ async def create_pool() -> asyncpg.Pool:
 # Search SQL
 # ---------------------------------------------------------------------------
 
-# The query is structured as a CTE:
+# Stage 1: build the tsqueries once, server-side; the main statement
+# binds their *normalised text* as real tsquery parameters, so nothing
+# re-parses query text per row.
 #
-#   1) `candidates` — pgvector HNSW lookup, top `$overfetch` by cosine
-#      similarity, with WHERE filters applied. We over-fetch because the
-#      hybrid re-rank may promote items that weren't in the top-N by
-#      similarity alone (ADR 0013).
-#
-#   2) outer SELECT — joins back to `repositories` for display fields and
-#      computes the hybrid score using the same formula as ranking.py:
-#         similarity   = 1 - (embedding <=> query)
-#         stars_norm   = LOG(1 + stars) / LOG_STARS_DENOMINATOR  (clamped <= 1)
-#         recency_norm = 0.5 ^ (age_days / half_life)   [via EXP(-age*LN(2)/hl)]
-#         hybrid       = w_sim * sim + w_stars * stars_norm + w_rec * recency_norm
-#      Then ORDER BY hybrid DESC LIMIT $limit.
+#   q_and    — websearch semantics over the raw query (all terms, any
+#              field including README).
+#   q_or     — lane membership over the README-free light column. For
+#              multi-term queries this is the OR of all pairwise ANDs
+#              of the content lexemes ("at least two terms present"):
+#              measured on the corpus, any-single-term membership for a
+#              broad category query visits ~66K heap tuples (~3 s on
+#              Micro compute) while the one-term tier never ranks
+#              anyway; requiring two terms keeps the scan proportional
+#              to the meaningful tiers. Single-term queries keep the
+#              plain single-lexeme match. Stemming and stopwords come
+#              from to_tsvector ("turn my notes into a website" reduces
+#              to its content words). One blind spot: a websearch-
+#              negated term appears as a positive lexeme here, so
+#              negation queries rank, rather than filter, this tier.
+#   lexemes  — the first 8 content lexemes; Python binds each into its
+#              own slot so the lane can count per-row term coverage
+#              with plain @@ tests (no per-row parsing or ranking
+#              functions).
+_TSQUERY_SQL = """
+WITH lex AS (
+    SELECT replace(t.lexeme, '''', '') AS lexeme, t.ord
+    FROM unnest(tsvector_to_array(to_tsvector('english', $1)))
+         WITH ORDINALITY AS t(lexeme, ord)
+    WHERE t.ord <= 8
+)
+SELECT websearch_to_tsquery('english', $1)::text AS q_and,
+       COALESCE(CASE
+           WHEN (SELECT count(*) FROM lex) >= 2 THEN
+               (SELECT string_agg(
+                    '(''' || a.lexeme || ''' & ''' || b.lexeme || ''')',
+                    ' | ')
+                FROM lex a JOIN lex b ON a.ord < b.ord)
+           ELSE
+               (SELECT string_agg('''' || lexeme || '''', ' | ') FROM lex)
+       END, '') AS q_or,
+       (SELECT COALESCE(array_agg(lexeme ORDER BY ord), '{}')
+        FROM lex) AS lexemes
+"""
+
+# Stage 2: the lanes, the fusion, and the blend.
 #
 # Parameter slots:
-#   $1  query vector (pgvector text format, "[v1,v2,...]")
-#   $2  model_name
-#   $3  overfetch (LIMIT inside the CTE)
-#   $4  language filter or NULL
-#   $5  topics filter (text[]) or NULL
-#   $6  min_stars or NULL
-#   $7  exclude_archived (bool)
-#   $8  similarity weight
-#   $9  stars weight
-#   $10 recency weight
-#   $11 half-life in days
-#   $12 final LIMIT (the requested top-N)
-
+#   $1  query vector (pgvector text format)         $2  model_name
+#   $3  fts lane limit    $4 dense lane limit       $5  name lane limit
+#   $6  AND tsquery (normalised text -> tsquery)    $7  OR tsquery
+#   $8  lowercased query for name matching          $9  LIKE prefix pattern
+#   $10 language | NULL   $11 topics | NULL         $12 min_stars | NULL
+#   $13 exclude_archived
+#   $14 rrf_k   $15 w_full_text   $16 w_semantic    $17 w_name
+#   $18 w_relevance   $19 w_stars   $20 w_recency   $21 half-life days
+#   $22 final LIMIT
+#   $23-$30 coverage slots (single-lexeme tsqueries, '' = unused)
+#   $31 fuzzy name query ('' disables the trigram arm)
+#
+# Constants baked in via .format (config values, not per-request):
+# embedding dim, stars pivot clamp, recency floor, demotion factors.
 _SEARCH_SQL = """
-WITH candidates AS (
-    SELECT
-        e.repo_id,
-        e.embedding,
-        1 - (e.embedding <=> $1::vector) AS similarity
+WITH fts_hits AS (
+    -- Membership: any content lexeme in the light fields (name/topics/
+    -- language/description) OR the full websearch query anywhere
+    -- including the README (one bitmap-OR over two GIN probes; no
+    -- weight labels, so no recheck detoasting).
+    -- Ordering: (term coverage, stars) — how many distinct query terms
+    -- the light fields cover, then popularity within each tier. The
+    -- coverage slots are pre-bound single-lexeme tsqueries (empty
+    -- slots match nothing), so the per-row work is a few tsvector
+    -- lookups on an inline column.
+    SELECT repo_id, coverage, stars FROM (
+        SELECT r.id AS repo_id, r.stars,
+               (r.search_tsv_light @@ $23)::int
+             + (r.search_tsv_light @@ $24)::int
+             + (r.search_tsv_light @@ $25)::int
+             + (r.search_tsv_light @@ $26)::int
+             + (r.search_tsv_light @@ $27)::int
+             + (r.search_tsv_light @@ $28)::int
+             + (r.search_tsv_light @@ $29)::int
+             + (r.search_tsv_light @@ $30)::int AS coverage
+        FROM repositories r
+        WHERE (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
+          AND ($10::text   IS NULL OR r.primary_language = $10)
+          AND ($11::text[] IS NULL OR r.topics && $11::text[])
+          AND ($12::int    IS NULL OR r.stars >= $12)
+          AND ($13::bool = FALSE OR r.is_archived = FALSE)
+        ORDER BY 3 DESC, 2 DESC
+        LIMIT $3::int
+    ) t
+),
+dense_hits AS (
+    -- Must ORDER BY the exact expression the halfvec index is built
+    -- on, or the planner falls back to a sequential scan.
+    SELECT e.repo_id,
+           (e.embedding::halfvec({dim})) <#> ($1::halfvec({dim})) AS dist
     FROM repository_embeddings e
     JOIN repositories r ON r.id = e.repo_id
     WHERE e.model_name = $2
-      AND ($4::text       IS NULL OR r.primary_language = $4)
-      AND ($5::text[]     IS NULL OR r.topics && $5::text[])
-      AND ($6::int        IS NULL OR r.stars >= $6)
-      AND ($7::bool = FALSE OR r.is_archived = FALSE)
-    ORDER BY e.embedding <=> $1::vector
-    LIMIT $3
+      AND ($10::text   IS NULL OR r.primary_language = $10)
+      AND ($11::text[] IS NULL OR r.topics && $11::text[])
+      AND ($12::int    IS NULL OR r.stars >= $12)
+      AND ($13::bool = FALSE OR r.is_archived = FALSE)
+    ORDER BY dist
+    LIMIT $4::int
+),
+name_hits AS (
+    SELECT repo_id, score, stars FROM (
+        SELECT r.id AS repo_id, r.stars,
+               GREATEST(
+                   CASE WHEN lower(r.full_name) = $8
+                          OR lower(r.name) = $8 THEN 1.0 ELSE 0.0 END,
+                   CASE WHEN lower(r.name) LIKE $9 THEN 0.7 ELSE 0.0 END,
+                   similarity(r.name, $8)::float8
+               ) AS score
+        FROM repositories r
+        WHERE (lower(r.full_name) = $8
+               OR lower(r.name) LIKE $9
+               OR r.name % $31)
+          AND ($10::text   IS NULL OR r.primary_language = $10)
+          AND ($11::text[] IS NULL OR r.topics && $11::text[])
+          AND ($12::int    IS NULL OR r.stars >= $12)
+          AND ($13::bool = FALSE OR r.is_archived = FALSE)
+        ORDER BY 3 DESC, 2 DESC
+        LIMIT $5::int
+    ) t
+),
+fts AS (
+    SELECT repo_id, ROW_NUMBER() OVER (
+        ORDER BY coverage DESC, stars DESC, repo_id) AS rnk
+    FROM fts_hits
+),
+dense AS (
+    SELECT repo_id, ROW_NUMBER() OVER (ORDER BY dist, repo_id) AS rnk
+    FROM dense_hits
+),
+name_lane AS (
+    SELECT repo_id, ROW_NUMBER() OVER (
+        ORDER BY score DESC, stars DESC, repo_id) AS rnk
+    FROM name_hits
+),
+fused AS (
+    SELECT COALESCE(f.repo_id, d.repo_id, n.repo_id) AS repo_id,
+           $15::float8 * COALESCE(1.0 / ($14::float8 + f.rnk), 0.0)
+         + $16::float8 * COALESCE(1.0 / ($14::float8 + d.rnk), 0.0)
+         + $17::float8 * COALESCE(1.0 / ($14::float8 + n.rnk), 0.0) AS rrf
+    FROM fts f
+    FULL JOIN dense d ON d.repo_id = f.repo_id
+    FULL JOIN name_lane n ON n.repo_id = COALESCE(f.repo_id, d.repo_id)
+),
+enriched AS (
+    -- One pass joins display fields and computes the per-query
+    -- normalisation inputs as window aggregates: the rrf range for
+    -- min-max and the stars pivot (clamped geometric mean of candidate
+    -- stars). A separate stats CTE + re-joins would visit every
+    -- candidate's heap tuple three more times — measurable seconds on
+    -- small compute.
+    SELECT fu.repo_id, fu.rrf,
+           r.full_name, r.name, r.description, r.url,
+           r.primary_language, r.topics, r.stars, r.pushed_at,
+           r.is_archived, r.is_fork,
+           MIN(fu.rrf) OVER () AS mn,
+           MAX(fu.rrf) OVER () AS mx,
+           LEAST({pivot_max}, GREATEST({pivot_min},
+               EXP(AVG(LN(GREATEST(r.stars, 1))) OVER ()))) AS pivot
+    FROM fused fu
+    JOIN repositories r ON r.id = fu.repo_id
 ),
 scored AS (
-    SELECT
-        c.repo_id,
-        c.similarity,
-        $8  * GREATEST(0, LEAST(1, c.similarity))               AS similarity_contribution,
-        $9  * LEAST(1.0, LOG(1 + r.stars) / {log_stars_denom})  AS stars_contribution,
-        $10 * CASE
-                WHEN r.pushed_at IS NULL THEN 0
-                ELSE EXP(
+    SELECT *,
+           (lower(full_name) = $8 OR lower(name) = $8) AS exact_name,
+           CASE WHEN is_archived THEN {demote_archived}
+                WHEN is_fork THEN {demote_fork}
+                ELSE 1.0 END AS demotion,
+           CASE WHEN mx > mn THEN (rrf - mn) / (mx - mn)
+                ELSE 1.0 END AS rel_norm,
+           stars / (stars + pivot) AS stars_sat,
+           CASE WHEN pushed_at IS NULL THEN 0.0
+                ELSE {recency_floor} + (1.0 - {recency_floor}) * EXP(
                     - GREATEST(
                         0,
-                        EXTRACT(EPOCH FROM (NOW() - r.pushed_at)) / 86400.0
-                    ) * LN(2) / $11
-                )
-              END                                                AS recency_contribution
-    FROM candidates c
-    JOIN repositories r ON r.id = c.repo_id
+                        EXTRACT(EPOCH FROM (NOW() - pushed_at)) / 86400.0
+                    ) * LN(2) / $21::float8)
+           END AS recency_norm
+    FROM enriched
+),
+ranked AS (
+    SELECT repo_id, full_name, description, url, primary_language,
+           topics, stars, pushed_at, exact_name,
+           (demotion * $18::float8 * rel_norm)     AS similarity_contribution,
+           (demotion * $19::float8 * stars_sat)    AS stars_contribution,
+           (demotion * $20::float8 * recency_norm) AS recency_contribution,
+           (demotion * ($18::float8 * rel_norm
+                      + $19::float8 * stars_sat
+                      + $20::float8 * recency_norm)) AS hybrid_score
+    FROM scored
+    ORDER BY exact_name DESC, hybrid_score DESC, stars DESC
+    LIMIT $22::int
 )
-SELECT
-    r.id            AS repo_id,
-    r.full_name,
-    r.description,
-    r.url,
-    r.primary_language,
-    r.topics,
-    r.stars,
-    r.pushed_at,
-    s.similarity,
-    s.similarity_contribution,
-    s.stars_contribution,
-    s.recency_contribution,
-    (s.similarity_contribution + s.stars_contribution + s.recency_contribution) AS hybrid_score
-FROM scored s
-JOIN repositories r ON r.id = s.repo_id
-ORDER BY hybrid_score DESC
-LIMIT $12
-""".format(log_stars_denom=LOG_STARS_DENOMINATOR)
+-- Display similarity (raw cosine) is fetched for the returned page
+-- only, not the whole candidate pool.
+SELECT rk.*,
+       COALESCE(1 - (e.embedding <=> $1::vector), 0.0) AS similarity
+FROM ranked rk
+LEFT JOIN repository_embeddings e
+       ON e.repo_id = rk.repo_id AND e.model_name = $2
+ORDER BY rk.exact_name DESC, rk.hybrid_score DESC, rk.stars DESC
+""".format(
+    dim=EMBEDDING_DIM,
+    pivot_min=STARS_PIVOT_MIN,
+    pivot_max=STARS_PIVOT_MAX,
+    recency_floor=RECENCY_FLOOR,
+    demote_archived=DEMOTION_ARCHIVED,
+    demote_fork=DEMOTION_FORK,
+)
 
 
 def _vector_to_pg(vector: List[float]) -> str:
@@ -201,50 +369,142 @@ def _vector_to_pg(vector: List[float]) -> str:
     return "[" + ",".join(f"{v:.6f}" for v in vector) + "]"
 
 
-def compute_overfetch(limit: int) -> int:
-    """Pick how many candidates HNSW should return for re-ranking.
+def name_query(query: str) -> str:
+    """The normalised form used for exact/fuzzy name matching."""
+    return query.strip().lower()
 
-    Bounded above and below to keep latency predictable: we never
-    over-fetch absurdly more than asked, but we also always have enough
-    headroom for the hybrid re-rank to surface non-top-similarity hits.
-    """
-    target = max(DEFAULT_OVERFETCH_MIN, DEFAULT_OVERFETCH_MULTIPLIER * limit)
-    return min(target, DEFAULT_OVERFETCH_MAX)
+
+def like_prefix_pattern(query: str) -> str:
+    """Left-anchored LIKE pattern for name-prefix matching, with LIKE
+    metacharacters escaped. An empty query yields an empty pattern,
+    which matches no (non-empty) name."""
+    q = name_query(query)
+    if not q:
+        return ""
+    return re.sub(r"([\\%_])", r"\\\1", q) + "%"
+
+
+def fuzzy_name_query(query: str) -> str:
+    """The string the trigram arm matches against, or '' to disable it.
+    Fuzzy matching exists for typo'd names, which are short; running
+    trigram similarity for a whole sentence against every repo name is
+    seconds of work for no recall (an empty string has no trigrams, so
+    `%` matches nothing — the cheap off-switch)."""
+    q = name_query(query)
+    return q if q and len(q.split()) <= NAME_FUZZY_MAX_TOKENS else ""
+
+
+def coverage_slots(lexemes: List[str]) -> List[str]:
+    """Bind-ready single-lexeme tsquery texts for the coverage slots:
+    the first FTS_COVERAGE_SLOTS content lexemes, quoted, padded with
+    empty tsqueries (which match nothing).
+
+    Each is weight-restricted to :B — topics + primary language, the
+    curated category vocabulary. Tiering on all fields let description
+    boilerplate inflate coverage: for "machine learning framework
+    python", ~350 repos carry all four terms *somewhere* (mostly
+    "framework" in a sales-pitch description), overflowing the lane
+    before the canonical tier; restricted to topics/language, the
+    full-coverage tier is 49 repos and tensorflow/pytorch/scikit-learn
+    sit directly under it by stars. Descriptions still gate lane
+    membership and still feed the dense lane's embeddings — they just
+    don't out-tier curated topics."""
+    slots = [
+        "'" + lexeme.replace("'", "") + "':B"
+        for lexeme in lexemes[:FTS_COVERAGE_SLOTS]
+    ]
+    return slots + [""] * (FTS_COVERAGE_SLOTS - len(slots))
+
+
+# pgvector 0.8 added hnsw.iterative_scan; on older servers the SET
+# would error, so probe once per process. The probe reads the installed
+# extension version from the catalog — asking current_setting() would
+# lie behind a pooler, where a fresh backend hasn't loaded the vector
+# library yet and reports extension GUCs as undefined.
+_iterative_scan_available: Optional[bool] = None
+
+
+async def _probe_iterative_scan(conn: asyncpg.Connection) -> bool:
+    global _iterative_scan_available
+    if _iterative_scan_available is None:
+        version = await conn.fetchval(
+            "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+        )
+        try:
+            major, minor = (int(part) for part in version.split(".")[:2])
+            _iterative_scan_available = (major, minor) >= (0, 8)
+        except (AttributeError, ValueError):
+            _iterative_scan_available = False
+        if not _iterative_scan_available:
+            logger.info(
+                "pgvector %s lacks hnsw.iterative_scan; filtered dense "
+                "lanes may run shallow", version,
+            )
+    return _iterative_scan_available
 
 
 async def search(
     pool: asyncpg.Pool,
     *,
+    query: str,
     query_vector: List[float],
     filters: SearchFilters,
     weights: ScoringWeights,
+    lanes: LaneWeights = LaneWeights(),
     limit: int,
 ) -> List[SearchHit]:
-    """Run a hybrid vector + metadata search and return ranked hits."""
+    """Run the three-lane hybrid search and return ranked hits."""
 
-    overfetch = compute_overfetch(limit)
     query_vec_text = _vector_to_pg(query_vector)
 
     async with pool.acquire() as conn:
-        # ef_search is a per-session GUC. Setting it inside a transaction
-        # scopes it to this query only; concurrent connections aren't
-        # affected.
+        use_iterative = await _probe_iterative_scan(conn)
+        # Session GUCs are set LOCAL inside a transaction so they scope
+        # to this query only — required behind the transaction pooler,
+        # where plain SETs don't stick to the next statement anyway.
         async with conn.transaction():
-            await conn.execute(f"SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}")
+            # One round trip for all the session GUCs (argument-free
+            # execute uses the simple protocol, which allows multiple
+            # statements). search_path: pg_trgm lives in `extensions`
+            # on Supabase and `public` locally; listing both resolves
+            # `%`/similarity() everywhere (missing schemas in a
+            # search_path are ignored).
+            gucs = [
+                "SET LOCAL search_path = public, extensions",
+                f"SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}",
+                f"SET LOCAL pg_trgm.similarity_threshold = "
+                f"{TRGM_SIMILARITY_THRESHOLD}",
+            ]
+            if use_iterative:
+                gucs.append("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            await conn.execute("; ".join(gucs))
+            tsq = await conn.fetchrow(_TSQUERY_SQL, query)
             rows = await conn.fetch(
                 _SEARCH_SQL,
-                query_vec_text,
-                MODEL_NAME,
-                overfetch,
-                filters.language,
-                filters.topics if filters.topics else None,
-                filters.min_stars,
-                filters.exclude_archived,
-                weights.similarity,
-                weights.stars,
-                weights.recency,
-                weights.half_life_days,
-                limit,
+                query_vec_text,                 # $1
+                MODEL_NAME,                     # $2
+                FTS_LANE_LIMIT,                 # $3
+                DENSE_LANE_LIMIT,               # $4
+                NAME_LANE_LIMIT,                # $5
+                tsq["q_and"],                   # $6
+                tsq["q_or"],                    # $7
+                name_query(query),              # $8
+                like_prefix_pattern(query),     # $9
+                filters.language,               # $10
+                filters.topics if filters.topics else None,  # $11
+                filters.min_stars,              # $12
+                filters.exclude_archived,       # $13
+                float(lanes.rrf_k),             # $14
+                lanes.full_text,                # $15
+                lanes.semantic,                 # $16
+                lanes.name,                     # $17
+                weights.similarity,             # $18
+                weights.stars,                  # $19
+                weights.recency,                # $20
+                weights.half_life_days,         # $21
+                limit,                          # $22
+                *coverage_slots(list(tsq["lexemes"] or [])),  # $23-$30
+                fuzzy_name_query(query),        # $31
             )
 
     return [
@@ -258,6 +518,7 @@ async def search(
             stars=row["stars"],
             pushed_at=row["pushed_at"],
             similarity=float(row["similarity"]),
+            exact_name=bool(row["exact_name"]),
             hybrid_score=float(row["hybrid_score"]),
             similarity_contribution=float(row["similarity_contribution"]),
             stars_contribution=float(row["stars_contribution"]),

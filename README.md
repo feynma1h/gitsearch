@@ -47,9 +47,9 @@ Postgres + pgvector database:
   incrementally — only repos created or updated since the last run.
 - **[`indexer/`](indexer/)** — an embedding service (`bge-small-en-v1.5`) plus a
   pipeline that turns each repo into a vector and stores it in pgvector.
-- **[`search/`](search/)** — the API that embeds your query, runs a hybrid
-  vector + metadata search, ranks the results, and generates the per-repo
-  "how do I use this?" guides.
+- **[`search/`](search/)** — the API that embeds your query, retrieves
+  candidates through fused full-text + vector + name lanes, ranks them, and
+  generates the per-repo "how do I use this?" guides.
 - **[`frontend/`](frontend/)** — a single static HTML page, no build step.
 
 The parts are deliberately independent: they share the database and talk over
@@ -94,11 +94,15 @@ its own.
                                               (pgvector + HNSW)
 ```
 
-**Ranking.** Results are ordered by a hybrid score that blends three signals,
-each normalised to `[0, 1]` so the weights are meaningful: semantic similarity
-to your query, a log-scaled star count, and an exponential recency decay. The
-search API returns each result's per-signal contribution, so the UI can show
-*why* something ranked where it did.
+**Retrieval and ranking.** Candidates come from three lanes in one SQL
+statement — full-text over name/topics/description/README, dense vectors
+(pgvector HNSW), and fuzzy name matching for typos — fused by Reciprocal Rank
+Fusion. The final order blends three normalised signals: fused relevance, a
+*saturating* star count (popularity boosts, but can never drown relevance),
+and recency with a floor (finished classics don't sink). Typing a repo's exact
+name puts that repo first, always. The search API returns each result's
+per-signal contribution, so the UI can show *why* something ranked where it
+did.
 
 **Usage guides.** Clicking a result asks the search service for a short,
 standard step-by-step guide (what it is → prerequisites → install → run →
@@ -122,6 +126,7 @@ make crawl          # metadata:  ~25 min for ~280K repos
 make readmes        # READMEs:    top 20K in ~4 hr (rate-limited)
 make index          # embeddings: ~8 hr for the indexed set
 make build-hnsw     # one-time, after indexing finishes
+make build-hnsw-halfvec  # the half-precision index the search service queries
 
 # 4. Search.
 curl -s localhost:8002/search \
@@ -206,9 +211,10 @@ These are real, deliberate boundaries, not oversights:
   active, popular slice and keeps it current rather than chasing completeness.
 - **Single instance.** One crawler token, one embedding process, one search
   replica. Horizontal scaling is straightforward but unnecessary at this size.
-- **Dense retrieval only.** Pure semantic search can struggle with exact-name
-  lookups and rare tokens; adding a lexical (BM25) lane is the documented next
-  step.
+- **Coverage-based lexical scoring, not BM25.** Postgres full-text search has
+  no IDF; on this corpus's short, uniform documents that is second-order. A
+  BM25 sidecar is the documented escape hatch if measurement ever says
+  otherwise.
 
 ## Running without Docker
 

@@ -1,12 +1,14 @@
-"""Tests for the hybrid scoring math.
+"""Tests for the ranking math (RRF fusion + additive blend).
 
 Pure module → pure tests. The cases pin down behaviour that's easy to
 break silently when someone "tweaks the formula": ordering between
-component scales, edge cases at the bounds, and the effect of weights
-on tie-breaking.
+component scales, edge cases at the bounds, the exact-name rule, and
+the effect of weights on tie-breaking.
 
-If a failure here is mysterious, also re-read ADR 0013 — these tests
-encode the same intent as the ADR, in executable form.
+If a failure here is mysterious, also re-read ADR 0018 — these tests
+encode the same intent as the ADR, in executable form. (And remember
+the SQL in service/db.py mirrors this module term for term; a deliberate
+formula change touches both files.)
 """
 
 from __future__ import annotations
@@ -14,56 +16,125 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta, timezone
 
+from service.config import (
+    DEMOTION_ARCHIVED,
+    DEMOTION_FORK,
+    RECENCY_FLOOR,
+    STARS_PIVOT_MAX,
+    STARS_PIVOT_MIN,
+)
 from service.ranking import (
     DEFAULT_RECENCY_HALF_LIFE_DAYS,
-    LOG_STARS_DENOMINATOR,
+    LaneWeights,
     ScoringWeights,
+    demotion_factor,
     hybrid_score,
+    is_exact_name,
+    minmax_norm,
     normalise_recency,
-    normalise_stars,
+    rrf_score,
+    saturate_stars,
+    stars_pivot,
 )
 
 
 # ---------------------------------------------------------------------------
-# normalise_stars
+# RRF fusion
 # ---------------------------------------------------------------------------
 
-def test_zero_stars_is_zero():
-    """log10(1) / denom == 0. Defensive: corpus is ≥200 stars but never
-    assume the input."""
-    assert normalise_stars(0) == 0.0
+def test_rrf_rank_one_everywhere_is_the_maximum():
+    lanes = LaneWeights()
+    top = rrf_score({"full_text": 1, "semantic": 1, "name": 1}, lanes)
+    expected = (lanes.full_text + lanes.semantic + lanes.name) / (lanes.rrf_k + 1)
+    assert math.isclose(top, expected, rel_tol=1e-12)
 
 
-def test_negative_stars_is_zero_not_an_exception():
-    """Garbage in -> 0; scoring never raises. Comment in the function
-    spells this out — pin it down so future refactors don't change it."""
-    assert normalise_stars(-1) == 0.0
+def test_rrf_missing_lane_contributes_nothing():
+    only_dense = rrf_score({"full_text": None, "semantic": 1, "name": None})
+    both = rrf_score({"full_text": 1, "semantic": 1, "name": None})
+    assert both > only_dense > 0.0
 
 
-def test_stars_normalisation_is_monotonic():
-    """More stars -> higher normalised value. The whole point."""
-    values = [normalise_stars(s) for s in [0, 100, 1_000, 10_000, 100_000]]
+def test_rrf_two_mid_ranks_beat_one_top_rank():
+    """The point of fusion: agreement across lanes outweighs a single
+    lane's enthusiasm (at defaults, ranks 5+5 in text+dense > rank 1 in
+    dense alone)."""
+    agreed = rrf_score({"full_text": 5, "semantic": 5, "name": None})
+    single = rrf_score({"full_text": None, "semantic": 1, "name": None})
+    assert agreed > single
+
+
+def test_rrf_deep_ranks_are_negligible_but_positive():
+    deep = rrf_score({"full_text": 200, "semantic": None, "name": None})
+    shallow = rrf_score({"full_text": 1, "semantic": None, "name": None})
+    assert 0.0 < deep < shallow / 4
+
+
+def test_rrf_k_flattens_rank_differences():
+    """Larger k -> smaller gap between rank 1 and rank 10. That's the
+    knob's purpose; pin the direction so a sweep can't invert it."""
+    def gap(k: int) -> float:
+        lanes = LaneWeights(rrf_k=k)
+        return (rrf_score({"semantic": 1}, lanes)
+                - rrf_score({"semantic": 10}, lanes))
+    assert gap(20) > gap(60)
+
+
+# ---------------------------------------------------------------------------
+# minmax_norm
+# ---------------------------------------------------------------------------
+
+def test_minmax_norm_spans_unit_interval():
+    assert minmax_norm(0.5, 0.5, 1.5) == 0.0
+    assert minmax_norm(1.5, 0.5, 1.5) == 1.0
+    assert minmax_norm(1.0, 0.5, 1.5) == 0.5
+
+
+def test_minmax_norm_degenerate_range_is_one():
+    """A single-candidate set: that candidate is the best we have."""
+    assert minmax_norm(0.7, 0.7, 0.7) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Stars: pivot + saturation
+# ---------------------------------------------------------------------------
+
+def test_stars_pivot_is_geometric_mean():
+    # geomean(100, 10_000) = 1000
+    assert math.isclose(stars_pivot([100, 10_000]), 1000.0, rel_tol=1e-9)
+
+
+def test_stars_pivot_clamps_to_configured_band():
+    assert stars_pivot([1, 1, 1]) == STARS_PIVOT_MIN
+    assert stars_pivot([10**7] * 5) == STARS_PIVOT_MAX
+    assert stars_pivot([]) == STARS_PIVOT_MIN
+
+
+def test_saturation_midpoint_at_pivot():
+    assert saturate_stars(1000, 1000.0) == 0.5
+
+
+def test_saturation_caps_rich_get_richer():
+    """100K stars must not be 10x better than 10K — saturation squeezes
+    the top of the range (the megastar cap from the research doc)."""
+    at_10k = saturate_stars(10_000, 1000.0)
+    at_100k = saturate_stars(100_000, 1000.0)
+    assert at_100k < at_10k * 1.1
+    assert at_100k < 1.0
+
+
+def test_saturation_zero_and_negative_stars():
+    assert saturate_stars(0, 1000.0) == 0.0
+    assert saturate_stars(-5, 1000.0) == 0.0
+
+
+def test_saturation_is_monotonic():
+    values = [saturate_stars(s, 1000.0) for s in [0, 100, 1_000, 10_000, 100_000]]
     assert values == sorted(values)
 
 
-def test_stars_normalisation_within_unit_range_for_realistic_corpus():
-    """Up to GitHub's largest repo (~400K stars), we stay below 1.0."""
-    assert 0.0 <= normalise_stars(100) < 1.0
-    assert 0.0 <= normalise_stars(400_000) < 1.0
-
-
-def test_stars_normalisation_exact_values():
-    """Pin down the curve. If LOG_STARS_DENOMINATOR ever changes, this
-    test fails loudly — which is the intent: it's a deliberate decision,
-    document the new values in the ADR."""
-    # log10(1 + 999) / 6.0 = log10(1000) / 6.0 = 3.0/6.0 = 0.5
-    assert normalise_stars(999) == 0.5
-    # log10(1 + 99) / 6.0 ≈ 2.0 / 6.0 ≈ 0.3333
-    assert math.isclose(normalise_stars(99), 1 / 3, rel_tol=1e-9)
-
-
 # ---------------------------------------------------------------------------
-# normalise_recency
+# normalise_recency (floored half-life decay)
 # ---------------------------------------------------------------------------
 
 NOW = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -73,19 +144,23 @@ def test_recency_just_pushed_is_one():
     assert math.isclose(normalise_recency(NOW, now=NOW), 1.0)
 
 
-def test_recency_one_half_life_ago_is_half():
+def test_recency_one_half_life_ago_is_band_midpoint():
     pushed = NOW - timedelta(days=DEFAULT_RECENCY_HALF_LIFE_DAYS)
-    assert math.isclose(normalise_recency(pushed, now=NOW), 0.5, rel_tol=1e-9)
+    expected = RECENCY_FLOOR + (1 - RECENCY_FLOOR) * 0.5
+    assert math.isclose(normalise_recency(pushed, now=NOW), expected, rel_tol=1e-9)
 
 
-def test_recency_two_half_lives_ago_is_quarter():
-    pushed = NOW - timedelta(days=2 * DEFAULT_RECENCY_HALF_LIFE_DAYS)
-    assert math.isclose(normalise_recency(pushed, now=NOW), 0.25, rel_tol=1e-9)
+def test_recency_never_decays_below_the_floor():
+    """The bounded-maintenance property: a finished, canonical library
+    from a decade ago keeps a recency floor instead of sinking to zero."""
+    ancient = NOW - timedelta(days=20 * 365)
+    value = normalise_recency(ancient, now=NOW)
+    assert RECENCY_FLOOR < value < RECENCY_FLOOR + 0.01
 
 
 def test_recency_none_is_zero():
-    """Repos with no pushed_at score zero — treated as maximally stale.
-    Not every repo has been pushed (rare; the GraphQL field is nullable)."""
+    """No pushed_at at all scores below the floor — 'never pushed' is a
+    data anomaly, not a maintenance statement."""
     assert normalise_recency(None, now=NOW) == 0.0
 
 
@@ -93,108 +168,114 @@ def test_recency_handles_naive_datetime_defensively():
     """asyncpg with TIMESTAMPTZ should always return aware datetimes,
     but a stray naive input shouldn't silently corrupt the math."""
     pushed_naive = datetime(2025, 5, 1, 12, 0, 0)  # no tzinfo
-    # Treat as UTC; one year ago with 365-day half-life -> 0.5
-    result = normalise_recency(pushed_naive, now=NOW)
-    assert math.isclose(result, 0.5, rel_tol=1e-3)
+    expected = RECENCY_FLOOR + (1 - RECENCY_FLOOR) * 0.5
+    assert math.isclose(normalise_recency(pushed_naive, now=NOW), expected,
+                        rel_tol=1e-3)
 
 
 def test_recency_future_pushed_at_clamps_to_one():
     """Clock skew or bad data — pushed_at in the future shouldn't
     produce >1 and skew the leaderboard."""
     future = NOW + timedelta(days=10)
-    result = normalise_recency(future, now=NOW)
-    assert result == 1.0
+    assert normalise_recency(future, now=NOW) == 1.0
 
 
 def test_recency_custom_half_life():
-    """Half-life is configurable via weights; the function honours it."""
     pushed = NOW - timedelta(days=30)
-    result = normalise_recency(pushed, now=NOW, half_life_days=30)
-    assert math.isclose(result, 0.5, rel_tol=1e-9)
+    expected = RECENCY_FLOOR + (1 - RECENCY_FLOOR) * 0.5
+    assert math.isclose(
+        normalise_recency(pushed, now=NOW, half_life_days=30),
+        expected, rel_tol=1e-9,
+    )
 
 
 # ---------------------------------------------------------------------------
-# hybrid_score
+# Exact-name rule + demotions
+# ---------------------------------------------------------------------------
+
+def test_exact_name_matches_bare_name_and_full_name():
+    assert is_exact_name("pytorch", full_name="pytorch/pytorch", name="pytorch")
+    assert is_exact_name("Helm/Helm", full_name="helm/helm", name="helm")
+    assert not is_exact_name("torch", full_name="pytorch/pytorch", name="pytorch")
+    assert not is_exact_name("machine learning framework",
+                             full_name="pytorch/pytorch", name="pytorch")
+    assert not is_exact_name("   ", full_name="a/b", name="b")
+
+
+def test_demotion_factors():
+    assert demotion_factor(is_archived=False, is_fork=False) == 1.0
+    assert demotion_factor(is_archived=False, is_fork=True) == DEMOTION_FORK
+    assert demotion_factor(is_archived=True, is_fork=False) == DEMOTION_ARCHIVED
+    # Archived-and-fork is mostly archive.
+    assert demotion_factor(is_archived=True, is_fork=True) == DEMOTION_ARCHIVED
+
+
+# ---------------------------------------------------------------------------
+# hybrid_score (the full blend)
 # ---------------------------------------------------------------------------
 
 def test_hybrid_score_combines_components_with_default_weights():
-    """A spot-check: similarity 0.8, stars 1000, pushed today.
-       sim_norm   = 0.8
-       stars_norm = log10(1001)/6 ≈ 0.5005
-       rec_norm   = 1.0
-       hybrid     = 1.0*0.8 + 0.3*0.5005 + 0.2*1.0 ≈ 1.1502
+    """Spot-check the arithmetic once, end to end:
+       rel_norm  = (0.02 - 0.01) / (0.03 - 0.01) = 0.5
+       stars_sat = 1000 / (1000 + 1000) = 0.5
+       recency   = 1.0 (pushed now)
+       hybrid    = 1.0*0.5 + 0.3*0.5 + 0.2*1.0 = 0.85
     """
-    s = hybrid_score(similarity=0.8, stars=1000, pushed_at=NOW, now=NOW)
-    expected = (
-        1.0 * 0.8
-        + 0.3 * (math.log10(1001) / LOG_STARS_DENOMINATOR)
-        + 0.2 * 1.0
+    s = hybrid_score(
+        rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+        stars=1000, pivot=1000.0, pushed_at=NOW, now=NOW,
     )
-    assert math.isclose(s, expected, rel_tol=1e-9)
+    assert math.isclose(s, 0.85, rel_tol=1e-9)
 
 
-def test_hybrid_score_similarity_dominates_with_default_weights():
-    """The whole point of the search engine: a highly-relevant low-star
-    repo should beat a low-relevance megastar repo. Sanity-check this
-    with the defaults; if someone changes weights such that this no
-    longer holds, that's a search-quality regression."""
+def test_hybrid_score_relevance_dominates_with_default_weights():
+    """The whole point of the search engine: the most relevant candidate
+    at 200 stars beats the least relevant megastar. With normalised
+    components, stars + recency can add at most 0.5 while relevance
+    spans 1.0."""
     relevant_small = hybrid_score(
-        similarity=0.85, stars=200, pushed_at=NOW, now=NOW,
+        rrf=0.03, rrf_min=0.01, rrf_max=0.03,
+        stars=200, pivot=1000.0, pushed_at=NOW, now=NOW,
     )
     irrelevant_huge = hybrid_score(
-        similarity=0.40, stars=400_000, pushed_at=NOW, now=NOW,
+        rrf=0.01, rrf_min=0.01, rrf_max=0.03,
+        stars=400_000, pivot=1000.0, pushed_at=NOW, now=NOW,
     )
     assert relevant_small > irrelevant_huge
 
 
-def test_hybrid_score_breaks_similarity_ties_by_stars_and_recency():
-    """When similarity is identical, the popular and recent repo wins.
-    Stars and recency are explicitly designed as tie-breakers."""
-    a = hybrid_score(similarity=0.7, stars=10_000, pushed_at=NOW, now=NOW)
-    b = hybrid_score(
-        similarity=0.7,
-        stars=300,
-        pushed_at=NOW - timedelta(days=5 * 365),  # ancient
-        now=NOW,
-    )
+def test_hybrid_score_breaks_relevance_ties_by_stars_and_recency():
+    """When fused relevance is identical, the popular and maintained
+    repo wins. Stars and recency are explicitly tie-breakers."""
+    a = hybrid_score(rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+                     stars=10_000, pivot=1000.0, pushed_at=NOW, now=NOW)
+    b = hybrid_score(rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+                     stars=300, pivot=1000.0,
+                     pushed_at=NOW - timedelta(days=5 * 365), now=NOW)
     assert a > b
 
 
-def test_hybrid_score_clamps_pathological_similarity():
-    """If pgvector hands us a weird value (numerical noise pushing
-    similarity slightly above 1, or below 0), we should clamp rather
-    than let it propagate."""
-    s_high = hybrid_score(similarity=1.5, stars=0, pushed_at=None, now=NOW)
-    s_one = hybrid_score(similarity=1.0, stars=0, pushed_at=None, now=NOW)
-    assert s_high == s_one
-
-    s_low = hybrid_score(similarity=-0.1, stars=0, pushed_at=None, now=NOW)
-    s_zero = hybrid_score(similarity=0.0, stars=0, pushed_at=None, now=NOW)
-    assert s_low == s_zero
-
-
-def test_hybrid_score_zero_weights_disables_a_component():
-    """Setting a weight to 0 effectively turns off that component.
-    This is the recommended way to A/B between pure-similarity and
-    hybrid: ?weights.stars=0&weights.recency=0."""
-    pure_sim_weights = ScoringWeights(similarity=1.0, stars=0.0, recency=0.0)
+def test_hybrid_score_zero_weights_disables_components():
+    """Setting weights to 0 turns components off — the pure-relevance
+    A/B configuration (?weights.stars=0&weights.recency=0)."""
     s = hybrid_score(
-        similarity=0.5,
-        stars=400_000,
-        pushed_at=NOW,
-        weights=pure_sim_weights,
-        now=NOW,
+        rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+        stars=400_000, pivot=1000.0, pushed_at=NOW, now=NOW,
+        weights=ScoringWeights(similarity=1.0, stars=0.0, recency=0.0),
     )
     assert math.isclose(s, 0.5, rel_tol=1e-9)
 
 
+def test_hybrid_score_demotion_scales_the_whole_blend():
+    plain = hybrid_score(rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+                         stars=1000, pivot=1000.0, pushed_at=NOW, now=NOW)
+    fork = hybrid_score(rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+                        stars=1000, pivot=1000.0, pushed_at=NOW, now=NOW,
+                        is_fork=True)
+    assert math.isclose(fork, plain * DEMOTION_FORK, rel_tol=1e-9)
+
+
 def test_hybrid_score_no_pushed_at_doesnt_break_anything():
-    """Some repos have NULL pushed_at; recency_norm becomes 0 and the
-    score is just similarity + stars contributions."""
-    s = hybrid_score(similarity=0.6, stars=1000, pushed_at=None, now=NOW)
-    expected = (
-        1.0 * 0.6
-        + 0.3 * (math.log10(1001) / LOG_STARS_DENOMINATOR)
-        + 0.2 * 0.0
-    )
-    assert math.isclose(s, expected, rel_tol=1e-9)
+    s = hybrid_score(rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+                     stars=1000, pivot=1000.0, pushed_at=None, now=NOW)
+    assert math.isclose(s, 1.0 * 0.5 + 0.3 * 0.5 + 0.2 * 0.0, rel_tol=1e-9)

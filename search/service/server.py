@@ -3,8 +3,9 @@
 A long-running FastAPI app that:
   1. Accepts a natural-language query + optional filters/weights.
   2. Embeds the query via the embedding service (ADRs 0007-0010).
-  3. Runs a hybrid pgvector search (ADR 0013) with the HNSW index
-     built by the indexer (ADR 0011).
+  3. Runs the three-lane hybrid retrieval (ADR 0018): full-text +
+     dense (HNSW, ADR 0011) + name lanes, fused and blended in one
+     SQL statement.
   4. Returns ranked results.
 
 Run with:
@@ -56,11 +57,18 @@ from .db import (
 from .embedding_client import EmbeddingClient, EmbeddingServiceError
 from .guide import GuideGenerationError, generate_guide
 from .repo_browser import RepoBrowser
+from .config import (
+    FULL_TEXT_WEIGHT,
+    NAME_WEIGHT,
+    RRF_K,
+    SEMANTIC_WEIGHT,
+)
 from .ranking import (
     DEFAULT_RECENCY_HALF_LIFE_DAYS,
     DEFAULT_SIMILARITY_WEIGHT,
     DEFAULT_STARS_WEIGHT,
     DEFAULT_RECENCY_WEIGHT,
+    LaneWeights,
     ScoringWeights,
 )
 
@@ -155,8 +163,11 @@ app = FastAPI(title="Search Service", lifespan=lifespan)
 # slowapi's default extractor handles correctly. The 30/minute default
 # is generous for human use (two searches every four seconds is
 # already aggressive typing) and tight enough that a script burst
-# gets throttled within a second.
-limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute"])
+# gets throttled within a second. SEARCH_RATE_LIMIT exists so a local
+# instance can serve the eval harness's sweeps at full speed; leave it
+# unset in production.
+_search_rate_limit = os.environ.get("SEARCH_RATE_LIMIT", "30/minute")
+limiter = Limiter(key_func=get_remote_address, default_limits=[_search_rate_limit])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -194,12 +205,22 @@ class WeightsModel(BaseModel):
     """Optional per-request weight overrides for the hybrid score.
 
     Defaults match ``ranking.py``. Any subset can be overridden; the
-    others fall back to defaults. See ADR 0013.
+    others fall back to defaults. ``similarity`` weights the fused
+    relevance signal (the name predates hybrid retrieval and is kept
+    for client compatibility — the frontend sliders send it).
+
+    The last four knobs configure the RRF fusion itself. They exist for
+    the eval harness's sweeps; interactive clients shouldn't need them.
+    See ADR 0018.
     """
     similarity: float = Field(default=DEFAULT_SIMILARITY_WEIGHT, ge=0)
     stars: float = Field(default=DEFAULT_STARS_WEIGHT, ge=0)
     recency: float = Field(default=DEFAULT_RECENCY_WEIGHT, ge=0)
     half_life_days: float = Field(default=DEFAULT_RECENCY_HALF_LIFE_DAYS, gt=0)
+    full_text_weight: float = Field(default=FULL_TEXT_WEIGHT, ge=0)
+    semantic_weight: float = Field(default=SEMANTIC_WEIGHT, ge=0)
+    name_weight: float = Field(default=NAME_WEIGHT, ge=0)
+    rrf_k: int = Field(default=RRF_K, ge=1, le=1000)
 
 
 class SearchRequest(BaseModel):
@@ -218,11 +239,15 @@ class HitModel(BaseModel):
     topics: List[str]
     stars: int
     pushed_at: Optional[str]  # ISO 8601 string for cleaner JSON
-    similarity: float
+    similarity: float         # raw cosine similarity (0.0 if not embedded)
+    # True when the query is exactly this repo's name (or owner/name) —
+    # such hits sort above everything else, popularity-independent.
+    exact_name: bool
     hybrid_score: float
-    # Per-component contributions to hybrid_score (already weight-multiplied).
-    # Their sum equals hybrid_score. Exposed so the UI can show why a result
-    # ranked where it did. See ADR 0013.
+    # Per-component contributions to hybrid_score (already weight-multiplied):
+    # fused relevance, saturated stars, recency. Their sum equals
+    # hybrid_score. Exposed so the UI can show why a result ranked where
+    # it did. See ADR 0018.
     similarity_contribution: float
     stars_contribution: float
     recency_contribution: float
@@ -257,7 +282,7 @@ async def health() -> dict:
 
 
 @app.post("/search", response_model=SearchResponse)
-@limiter.limit("30/minute")
+@limiter.limit(_search_rate_limit)
 async def do_search(request: Request, req: SearchRequest) -> SearchResponse:
     if _pool is None or _embedder is None:
         raise HTTPException(503, "service not ready")
@@ -282,12 +307,20 @@ async def do_search(request: Request, req: SearchRequest) -> SearchResponse:
         recency=req.weights.recency,
         half_life_days=req.weights.half_life_days,
     )
+    lanes = LaneWeights(
+        full_text=req.weights.full_text_weight,
+        semantic=req.weights.semantic_weight,
+        name=req.weights.name_weight,
+        rrf_k=req.weights.rrf_k,
+    )
 
     hits = await search(
         _pool,
+        query=req.query,
         query_vector=query_vec,
         filters=filters,
         weights=weights,
+        lanes=lanes,
         limit=req.limit,
     )
 
@@ -310,6 +343,7 @@ def _hit_to_model(hit: SearchHit) -> HitModel:
         stars=hit.stars,
         pushed_at=hit.pushed_at.isoformat() if hit.pushed_at is not None else None,
         similarity=hit.similarity,
+        exact_name=hit.exact_name,
         hybrid_score=hit.hybrid_score,
         similarity_contribution=hit.similarity_contribution,
         stars_contribution=hit.stars_contribution,

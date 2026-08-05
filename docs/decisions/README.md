@@ -52,11 +52,12 @@ between an ADR and a commit message.
 | 0010 | indexer   | [Caller-side batching](0010-caller-side-batching.md)                   | accepted |
 | 0011 | indexer   | [HNSW over IVFFlat](0011-hnsw-vs-ivfflat.md)                           | accepted |
 | 0012 | search    | [Search as a separate service](0012-search-as-a-separate-service.md)   | accepted |
-| 0013 | search    | [Hybrid scoring formula and over-fetch + re-rank](0013-hybrid-scoring-formula.md) | accepted |
+| 0013 | search    | [Hybrid scoring formula and over-fetch + re-rank](0013-hybrid-scoring-formula.md) | superseded by 0018 |
 | 0014 | pipeline  | [Chunked GitHub Actions for corpus refresh](0014-chunked-actions-refresh.md) | accepted |
 | 0015 | crawler   | [Incremental metadata refresh](0015-incremental-metadata-refresh.md) | accepted |
 | 0016 | search    | [LLM-generated repository usage guides](0016-llm-usage-guide.md) | accepted |
 | 0017 | search    | [Agentic full-repo exploration for usage guides](0017-agentic-guide-generation.md) | accepted |
+| 0018 | search    | [Three-lane hybrid retrieval with RRF fusion and an additive popularity blend](0018-three-lane-hybrid-retrieval.md) | accepted |
 
 The indexer block (0005–0011) reads as a connected arc: *where the
 model lives* → *where its output goes* → *what model produces it* →

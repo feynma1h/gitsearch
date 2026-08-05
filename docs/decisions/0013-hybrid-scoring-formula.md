@@ -1,6 +1,8 @@
 # ADR 0013: Hybrid scoring formula and over-fetch + re-rank
 
-**Status:** accepted
+**Status:** superseded by ADR-0018 (the normalise-then-weighted-sum idea and
+the component-contribution API contract carry forward; single-lane dense
+retrieval and the log-stars term do not)
 **Date:** 2026-05-03
 
 ## Context

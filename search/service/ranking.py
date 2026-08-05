@@ -1,22 +1,33 @@
-"""Hybrid scoring for search results.
+"""Ranking math for search results: RRF fusion + the additive blend.
 
 This module is pure (no I/O, no async): given numeric inputs, return a
-score. Mirrors the layout of ``indexer/pipeline/document_builder.py`` —
-the ranking math is small but disproportionately important to search
-quality, so it lives in its own well-tested module rather than being
-inlined into the SQL query string.
+score. The ranking math is small but disproportionately important to
+search quality, so it lives in its own well-tested module rather than
+being inlined into the SQL query string.
 
-The scoring formula and its rationale are documented in ADR 0013. The
-short version: each component (similarity, stars, recency) is normalised
-to roughly [0, 1] so the weights are interpretable, then combined as a
-weighted sum.
+The formula and its rationale are documented in ADR 0018 (which
+supersedes ADR 0013's similarity-weighted sum). The short version:
 
-The actual top-K query computes these expressions in SQL (see ``db.py``).
-The Python implementations here exist for:
-  - testing the math in isolation,
-  - documenting it in one place,
-  - re-ranking in Python if a future caller ever needs to (e.g., to
-    tune weights without re-issuing the SQL query).
+  1. Three retrieval lanes (full-text, dense, name) each produce a
+     ranking; weighted Reciprocal Rank Fusion merges them into one
+     relevance score per candidate:  sum_lane  w_lane / (k + rank).
+  2. The final ordering is an additive blend of normalised components:
+         final = demotion * ( w_rel * minmax(rrf over candidates)
+                            + w_stars * sat(stars)
+                            + w_rec * recency )
+     with sat(x) = x / (x + pivot) — saturation, so popularity is a
+     bounded boost, never a runaway multiplier — and recency floored,
+     so finished-but-canonical libraries don't sink to zero.
+  3. crates.io's exact-name rule: a candidate whose name (or
+     owner/name) exactly matches the query sorts above everything,
+     popularity-independent. If you type a thing's name, you get it.
+
+The actual top-K query computes these expressions in SQL (see
+``db.py``). The Python implementations here exist for testing the math
+in isolation, documenting it in one place, and re-ranking in Python if
+a future caller ever needs to. They must stay in sync with the SQL —
+any change to the formula touches both files; the tests in
+``tests/test_ranking.py`` pin down the Python side.
 """
 
 from __future__ import annotations
@@ -24,38 +35,33 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Dict, Optional, Sequence
 
+from .config import (
+    DEMOTION_ARCHIVED,
+    DEMOTION_FORK,
+    FULL_TEXT_WEIGHT,
+    NAME_WEIGHT,
+    RECENCY_FLOOR,
+    RRF_K,
+    SEMANTIC_WEIGHT,
+    STARS_PIVOT_MAX,
+    STARS_PIVOT_MIN,
+)
 
 # ---------------------------------------------------------------------------
-# Normalisation knobs
+# Defaults
 # ---------------------------------------------------------------------------
 
-# Denominator for log-stars normalisation.
-#
-# We want stars_norm in [0, 1] for the realistic range of repos in our
-# corpus. The most-starred public repo on GitHub is ~400K stars
-# (freeCodeCamp/freeCodeCamp). log10(1 + 400_000) ≈ 5.60. We round up to
-# 6.0 so the normalised value stays under 1.0 even as new megastar repos
-# emerge — and a fixed denominator means we don't need a per-query
-# `MAX(stars)` lookup. See ADR 0013.
-LOG_STARS_DENOMINATOR: float = 6.0
-
-# Recency half-life in days.
-#
-# A repo pushed `HALF_LIFE_DAYS` ago scores 0.5 on the recency component;
-# 2*half-life ago scores 0.25; etc. 365 days is a reasonable default for
-# "still maintained". Tunable via config.
+# Recency half-life in days: the decaying part of the recency signal
+# halves every this-many days (but never sinks below RECENCY_FLOOR).
 DEFAULT_RECENCY_HALF_LIFE_DAYS: float = 365.0
 
-
-# ---------------------------------------------------------------------------
-# Default weights
-# ---------------------------------------------------------------------------
-
-# Similarity dominates: this is a *semantic* search engine, not a
-# popularity ranker. Stars and recency are tie-breakers and demote
-# semantically-close-but-stale or low-signal matches.
+# Relevance dominates: this is a search engine, not a popularity
+# ranker. Stars and recency are tie-breakers among comparably relevant
+# results. The field names date from when the relevance signal was
+# cosine similarity alone; they're kept because the public API and the
+# frontend sliders speak them.
 DEFAULT_SIMILARITY_WEIGHT: float = 1.0
 DEFAULT_STARS_WEIGHT: float = 0.3
 DEFAULT_RECENCY_WEIGHT: float = 0.2
@@ -63,11 +69,12 @@ DEFAULT_RECENCY_WEIGHT: float = 0.2
 
 @dataclass(frozen=True)
 class ScoringWeights:
-    """Configuration for the hybrid score.
+    """Blend weights (per-request overridable; the frontend sliders map
+    onto the first three fields).
 
-    Held as a small value object so it's trivially passable across the
-    module boundary (e.g., from server config or per-request overrides
-    into the SQL builder).
+    ``similarity`` weights the fused *relevance* signal — the name is
+    the API's historical vocabulary, kept so existing clients and the
+    tune-ranking sliders keep working unchanged.
     """
     similarity: float = DEFAULT_SIMILARITY_WEIGHT
     stars: float = DEFAULT_STARS_WEIGHT
@@ -75,27 +82,72 @@ class ScoringWeights:
     half_life_days: float = DEFAULT_RECENCY_HALF_LIFE_DAYS
 
 
+@dataclass(frozen=True)
+class LaneWeights:
+    """RRF fusion configuration (per-request overridable for eval
+    sweeps; requests normally ride the config defaults)."""
+    full_text: float = FULL_TEXT_WEIGHT
+    semantic: float = SEMANTIC_WEIGHT
+    name: float = NAME_WEIGHT
+    rrf_k: int = RRF_K
+
+
 # ---------------------------------------------------------------------------
 # Pure scoring functions
 # ---------------------------------------------------------------------------
 
-def normalise_stars(stars: int) -> float:
-    """Normalise a star count to roughly [0, 1].
+def rrf_score(
+    ranks: Dict[str, Optional[int]],
+    lanes: LaneWeights = LaneWeights(),
+) -> float:
+    """Weighted Reciprocal Rank Fusion over per-lane ranks (1-based).
 
-    log10(1 + stars) / LOG_STARS_DENOMINATOR. The +1 keeps it well-defined
-    for stars=0 (which we don't expect in our corpus, but be defensive).
-
-    Examples:
-        100 stars   -> 0.335
-        1_000       -> 0.500
-        10_000      -> 0.667
-        100_000     -> 0.835
-        400_000     -> 0.933
+    ``ranks`` maps lane name ('full_text' | 'semantic' | 'name') to the
+    candidate's rank in that lane, or None if the lane didn't return it.
     """
-    if stars < 0:
-        # Garbage in -> 0; never raise from a scoring function.
+    weights = {
+        "full_text": lanes.full_text,
+        "semantic": lanes.semantic,
+        "name": lanes.name,
+    }
+    total = 0.0
+    for lane, rank in ranks.items():
+        if rank is not None:
+            total += weights[lane] / (lanes.rrf_k + rank)
+    return total
+
+
+def minmax_norm(value: float, lo: float, hi: float) -> float:
+    """Normalise ``value`` into [0, 1] given the candidate set's range.
+    A degenerate range (single candidate) maps to 1.0 — that candidate
+    IS the most relevant thing we found."""
+    if hi <= lo:
+        return 1.0
+    return (value - lo) / (hi - lo)
+
+
+def stars_pivot(candidate_stars: Sequence[int]) -> float:
+    """The saturation pivot: geometric mean of the candidate set's star
+    counts, clamped to a sane band (config: STARS_PIVOT_MIN/MAX).
+
+    Per-query, so "typical for this query's candidates" is the yardstick
+    — sat(pivot) = 0.5 by construction. Zero-star rows count as 1 star
+    to keep the log defined.
+    """
+    if not candidate_stars:
+        return STARS_PIVOT_MIN
+    mean_log = sum(math.log(max(s, 1)) for s in candidate_stars) / len(candidate_stars)
+    return min(STARS_PIVOT_MAX, max(STARS_PIVOT_MIN, math.exp(mean_log)))
+
+
+def saturate_stars(stars: int, pivot: float) -> float:
+    """sat(x) = x / (x + pivot): 0 at zero stars, 0.5 at the pivot,
+    asymptotically 1. Saturation caps rich-get-richer — at pivot=1000,
+    100K stars scores 0.990 and 10K scores 0.909: distinguishable, but
+    megastardom can't drown relevance."""
+    if stars <= 0:
         return 0.0
-    return math.log10(1 + stars) / LOG_STARS_DENOMINATOR
+    return stars / (stars + pivot)
 
 
 def normalise_recency(
@@ -103,17 +155,16 @@ def normalise_recency(
     *,
     now: Optional[datetime] = None,
     half_life_days: float = DEFAULT_RECENCY_HALF_LIFE_DAYS,
+    floor: float = RECENCY_FLOOR,
 ) -> float:
-    """Normalise "time since last push" to [0, 1] via half-life decay.
+    """Bounded maintenance signal in [floor, 1] via floored half-life
+    decay: ``floor + (1 - floor) * 0.5 ** (age_days / half_life)``.
 
-    A repo pushed *now* scores 1.0; one half-life ago scores 0.5; two
-    half-lives ago, 0.25; etc. ``pushed_at`` of None scores 0 — repos
-    that have never been pushed are treated as maximally stale.
-
-    Implementation: ``0.5 ** (age_days / half_life_days)``, equivalent
-    to ``exp(-age_days * ln(2) / half_life_days)``. The "half-life"
-    framing is intuitive for tuning ("a year ago scores half"); we
-    use it directly so the parameter name matches the math.
+    A repo pushed now scores 1.0; one half-life ago, the midpoint of the
+    band; long-abandoned ones approach the floor rather than zero — old
+    canonical libraries must not sink out of sight for being finished.
+    ``pushed_at`` of None scores 0 (below the floor deliberately:
+    "never pushed" is a data anomaly, not a maintenance statement).
 
     ``now`` is injectable for deterministic testing.
     """
@@ -132,33 +183,50 @@ def normalise_recency(
         now = now.replace(tzinfo=timezone.utc)
 
     age_days = max(0.0, (now - pushed_at).total_seconds() / 86_400.0)
-    return 0.5 ** (age_days / half_life_days)
+    return floor + (1.0 - floor) * 0.5 ** (age_days / half_life_days)
+
+
+def demotion_factor(*, is_archived: bool, is_fork: bool) -> float:
+    """Multiplier applied to the whole blended score. Archived beats
+    fork if somehow both apply — an archived fork is mostly archive."""
+    if is_archived:
+        return DEMOTION_ARCHIVED
+    if is_fork:
+        return DEMOTION_FORK
+    return 1.0
+
+
+def is_exact_name(query: str, *, full_name: str, name: str) -> bool:
+    """crates.io's rule: the query IS this repo's name. Case-insensitive
+    on either the bare name ("pytorch") or owner/name ("pytorch/pytorch")."""
+    q = query.strip().lower()
+    return bool(q) and (full_name.lower() == q or name.lower() == q)
 
 
 def hybrid_score(
     *,
-    similarity: float,
+    rrf: float,
+    rrf_min: float,
+    rrf_max: float,
     stars: int,
+    pivot: float,
     pushed_at: Optional[datetime],
+    is_archived: bool = False,
+    is_fork: bool = False,
     weights: ScoringWeights = ScoringWeights(),
     now: Optional[datetime] = None,
 ) -> float:
-    """Combine the three components into a single hybrid score.
-
-    All inputs are normalised first (see ADR 0013), then summed with the
-    provided weights. The output is roughly bounded by
-    ``weights.similarity + weights.stars + weights.recency`` but its
-    absolute scale doesn't matter — only the *ordering* across results
-    is meaningful.
-    """
-    sim_norm = max(0.0, min(1.0, similarity))  # clamp pathological values
-    stars_norm = normalise_stars(stars)
+    """The full blend, mirroring the SQL in ``db.py`` term for term.
+    Only the *ordering* across results is meaningful, with one caveat:
+    relevance is min-max normalised over the query's candidate set, so
+    scores are comparable within a response, not across queries."""
+    rel_norm = minmax_norm(rrf, rrf_min, rrf_max)
+    stars_sat = saturate_stars(stars, pivot)
     recency_norm = normalise_recency(
         pushed_at, now=now, half_life_days=weights.half_life_days
     )
-
-    return (
-        weights.similarity * sim_norm
-        + weights.stars * stars_norm
+    return demotion_factor(is_archived=is_archived, is_fork=is_fork) * (
+        weights.similarity * rel_norm
+        + weights.stars * stars_sat
         + weights.recency * recency_norm
     )

@@ -442,7 +442,7 @@
 <footer>
   <a href="https://github.com/feynma1h/gitsearch" target="_blank" rel="noopener">see how it’s built</a>
   <span aria-hidden="true"> · </span>
-  <span class="about-search" id="about-search" title="Search runs on an embedding model. Guides are written by an AI model from each repo’s files.">about the search</span>
+  <span class="about-search" id="about-search" title="Search pairs an embedding model with full-text and name matching. Guides are written by an AI model from each repo’s files.">about the search</span>
 </footer>
 
 <noscript><p style="text-align:center;padding:16px">gitsearch needs JavaScript to search.</p></noscript>
@@ -988,7 +988,8 @@
   /* ---- Misc ------------------------------------------------------------- */
   function updateAboutTip() {
     els.about.title =
-      `Search runs on the ${state.searchModel || "bge-small-en-v1.5"} embedding model. ` +
+      `Search pairs the ${state.searchModel || "bge-small-en-v1.5"} embedding model ` +
+      `with full-text and name matching. ` +
       `Guides are written by ${state.guideModel || "an AI model"} from each repo’s files.`;
   }
 
