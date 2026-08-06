@@ -467,16 +467,42 @@ _NAME_NORM_WHERE_ARM = """
 
 
 def _coverage_expr(with_enrichment: bool) -> str:
+    """The FTS lane's per-row term-coverage expression.
+
+    Phase 1: how many of the query's first 8 content lexemes the light
+    fields cover. Phase 2 adds enrichment, CAPPED at completing one
+    additional term:
+
+        coverage = own_terms + LEAST(1, enrichment_only_terms)
+
+    The cap is the measured lesson of the first phase-2 eval: mined
+    category trails paint every repo a topical list links with that
+    list's vocabulary ("Game Engine Development" lands on bootstrap via
+    one list's tooling section), and with stars ordering inside tiers,
+    megastars with two stray enrichment terms took over category
+    queries wholesale (-0.031 nDCG). Legitimate wins look different:
+    the repo's own curated fields already cover most terms and
+    enrichment supplies the one word its metadata lacks (pytorch:
+    machine+learning+python own, "framework" mined). Letting enrichment
+    complete a tier but never build one keeps the gate win and evicts
+    the noise. Repos whose vocabulary is entirely synthetic (the pure
+    Doc2Query case) still enter the lane through membership and reach
+    ranking through the dense lane and RRF.
+    """
     slots = range(23, 23 + FTS_COVERAGE_SLOTS)
-    if with_enrichment:
-        parts = [
-            f"(r.search_tsv_light @@ ${n}"
-            f" OR COALESCE(ec.c{i}, FALSE))::int"
-            for i, n in enumerate(slots, start=1)
-        ]
-    else:
-        parts = [f"(r.search_tsv_light @@ ${n})::int" for n in slots]
-    return ("\n             + ").join(parts)
+    own = [f"(r.search_tsv_light @@ ${n})::int" for n in slots]
+    if not with_enrichment:
+        return ("\n             + ").join(own)
+    extra = [
+        f"(COALESCE(ec.c{i}, FALSE) AND NOT r.search_tsv_light @@ ${n})::int"
+        for i, n in enumerate(slots, start=1)
+    ]
+    return (
+        ("\n             + ").join(own)
+        + "\n             + LEAST(1, "
+        + ("\n                        + ").join(extra)
+        + ")"
+    )
 
 
 def _build_search_sql(phase2: bool) -> str:

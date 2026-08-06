@@ -60,7 +60,10 @@ LIMIT $2
 # here keeps an enrich-label run proportional to the enriched set and
 # keeps label coverage a controlled experiment (old coverage + nothing
 # else — a never-embedded repo doesn't sneak in just because a run
-# used a bigger --top-n).
+# used a bigger --top-n). Driven FROM the enrichment table (~50K
+# distinct repos) rather than filtering all of `repositories`: the
+# repositories-driven EXISTS shape ran past the transaction pooler's
+# statement timeout.
 _FETCH_PENDING_ENRICHED_SQL = """
 SELECT
     r.id,
@@ -69,14 +72,13 @@ SELECT
     r.primary_language,
     r.topics,
     r.readme
-FROM repositories r
+FROM (SELECT DISTINCT repo_id FROM repository_enrichment) en
+JOIN repositories r ON r.id = en.repo_id
 LEFT JOIN repository_embeddings e
        ON e.repo_id = r.id AND e.model_name = $1
 WHERE e.repo_id IS NULL
   AND r.is_archived = FALSE
   AND r.readme_status IS NOT NULL
-  AND EXISTS (SELECT 1 FROM repository_enrichment en
-              WHERE en.repo_id = r.id)
 ORDER BY r.stars DESC
 LIMIT $2
 """

@@ -91,6 +91,16 @@ def test_both_sql_variants_bind_the_same_34_parameters() -> None:
     assert _param_numbers(_build_search_sql(False)) == expected
 
 
+def test_enrichment_coverage_is_capped_at_one_term() -> None:
+    # Enrichment may COMPLETE a coverage tier, never build one: the
+    # phase-2 expression wraps enrichment-only terms in LEAST(1, ...).
+    # Removing the cap re-opens the megastar tier-takeover measured in
+    # the first phase-2 eval (bootstrap winning "game engine").
+    on, off = _build_search_sql(True), _build_search_sql(False)
+    assert "LEAST(1," in on
+    assert "LEAST(1," not in off
+
+
 def test_phase_flag_controls_enrichment_references() -> None:
     on, off = _build_search_sql(True), _build_search_sql(False)
     for table in ("repository_enrichment", "repository_signals"):
