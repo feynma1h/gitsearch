@@ -18,7 +18,7 @@ from typing import List
 
 import aiohttp
 
-from .config import EMBEDDING_DIM, MODEL_NAME, SERVICE_TIMEOUT_SECONDS
+from .config import EMBEDDING_DIM, ENCODER_NAME, SERVICE_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,11 @@ class EmbeddingClient:
             return []
 
         url = f"{self._base_url}/embed"
-        payload = {"texts": texts, "model": MODEL_NAME}
+        # ENCODER_NAME, not MODEL_NAME: storage labels like
+        # "...+enrich-v1" name a document construction over the same
+        # encoder; the service checks the requested model against what
+        # it loaded and must keep doing so.
+        payload = {"texts": texts, "model": ENCODER_NAME}
 
         last_error: str = ""
         for attempt in range(_MAX_RETRIES):

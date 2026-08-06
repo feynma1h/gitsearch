@@ -35,6 +35,13 @@ MODEL_NAME: str = os.getenv("EMBEDDINGS_MODEL_LABEL", "BAAI/bge-small-en-v1.5")
 ENRICH_LABEL_MARKER: str = "+enrich"
 INCLUDE_ENRICHMENT: bool = ENRICH_LABEL_MARKER in MODEL_NAME
 
+# The encoder the embedding service must actually run: the label minus
+# any "+suffix" (labels follow "encoder+doc-construction"). This is
+# what the HTTP client requests — the service serves encoders and
+# rightly rejects storage labels it has never heard of; the full label
+# exists only in repository_embeddings.model_name.
+ENCODER_NAME: str = MODEL_NAME.split("+", 1)[0]
+
 # Vector dimension produced by the model. Hard-coded because it's also
 # baked into the SQL schema (vector(384)). Changing the model usually means
 # changing the dimension, which is a schema change, which is a new ADR.
