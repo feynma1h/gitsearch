@@ -417,7 +417,7 @@
     <div class="centered-panel" id="wait-cold" hidden>
       <span class="pulse-dot" aria-hidden="true"></span>
       <h2 id="cold-title">Waking up the search engine…</h2>
-      <p id="cold-sub">The first search after a quiet spell takes about 40 seconds while the engine starts. After this one, searches take about a second.</p>
+      <p id="cold-sub">The first search after a quiet spell takes about a minute while the engine starts. After this one, searches take about a second.</p>
     </div>
   </div>
 
@@ -593,17 +593,19 @@
 
   const COLD_STAGES = [
     ["Waking up the search engine…",
-     "The first search after a quiet spell takes about 40 seconds while the engine starts. After this one, searches take about a second."],
+     "The first search after a quiet spell takes about a minute while the engine starts. After this one, searches take about a second."],
     ["Still waking up — about halfway.",
      "This only happens on the first search of a visit. Yours will run the moment the engine is awake."],
     ["Almost ready…", "Fetching your results now."],
     ["Taking longer than we expected.",
      "Still at it — your search will run automatically the moment the engine responds. Nothing to redo."],
   ];
-  // Elapsed ms into the wake at which each stage becomes true. The wake
-  // measures ~38s end to end; the last stage is the honesty valve for the
-  // rare wake that overruns the promise.
-  const COLD_STAGE_AT = [2500, 18000, 34000, 55000];
+  // Elapsed ms into the wake at which each stage becomes true. A full cold
+  // search measures ~60-65s end to end (ADR 0019: container wake + model
+  // wake + first-query index warmup); "Almost ready" lands where the
+  // results query actually starts. The last stage is the honesty valve
+  // for the rare wake that overruns the promise.
+  const COLD_STAGE_AT = [2500, 30000, 50000, 78000];
   function coldStage(i) {
     els.waitSkeleton.hidden = true;
     els.waitCold.hidden = false;
@@ -653,7 +655,7 @@
 
     const t0 = performance.now();
     const ctrl = new AbortController();
-    after(75000, () => ctrl.abort());
+    after(90000, () => ctrl.abort()); // matches the server's 90s request cap
     try {
       const resp = await fetch(SEARCH_URL, {
         method: "POST",

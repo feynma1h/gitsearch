@@ -58,6 +58,7 @@ between an ADR and a commit message.
 | 0016 | search    | [LLM-generated repository usage guides](0016-llm-usage-guide.md) | accepted |
 | 0017 | search    | [Agentic full-repo exploration for usage guides](0017-agentic-guide-generation.md) | accepted |
 | 0018 | search    | [Three-lane hybrid retrieval with RRF fusion and an additive popularity blend](0018-three-lane-hybrid-retrieval.md) | accepted |
+| 0019 | frontend  | [Cold-start budget and honest wake narration](0019-cold-start-narration.md) | accepted |
 | 0020 | search    | [Index-time enrichment — mined curation, versioned embeddings, and a dark criticality signal](0020-index-time-enrichment.md) | accepted |
 
 The indexer block (0005–0011) reads as a connected arc: *where the
