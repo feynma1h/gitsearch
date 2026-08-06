@@ -391,13 +391,18 @@ def _gemini_json(method: str, url: str, payload: Optional[dict] = None,
         return json.loads(resp.read())
 
 
-def _with_gemini_retries(what: str, fn):
-    """Run ``fn`` with backoff on 429/5xx (Retry-After honoured). The
-    File API rate-limits bursts even well under its storage quota —
-    measured on the first full-corpus submit."""
+def _with_gemini_retries(what: str, fn, attempts: int = 6):
+    """Run ``fn`` with backoff on 429/5xx (Retry-After honoured).
+
+    Job creation passes a much higher ``attempts``: a create-429 is
+    usually the enqueued-tokens quota still held by the PREVIOUS chunk,
+    and queue residence has measured anywhere from four minutes to five
+    hours — a short ladder just crashes the drain mid-corpus. Waiting
+    IS the correct behaviour there, exactly like the post-submit drain
+    poll."""
     import urllib.error
     delay = 30.0
-    for attempt in range(6):
+    for attempt in range(attempts):
         try:
             return fn()
         except urllib.error.HTTPError as exc:
@@ -407,13 +412,15 @@ def _with_gemini_retries(what: str, fn):
                 )[:600]
             except Exception:  # noqa: BLE001
                 body = "<unreadable>"
-            if exc.code not in (429, 500, 502, 503, 504) or attempt == 5:
+            if exc.code not in (429, 500, 502, 503, 504) \
+                    or attempt == attempts - 1:
                 logger.error("%s: HTTP %s: %s", what, exc.code, body)
                 raise
             retry_after = exc.headers.get("Retry-After")
             wait = float(retry_after) if retry_after else delay
-            logger.info("%s: HTTP %s — retrying in %.0fs (attempt %d/5): %s",
-                        what, exc.code, wait, attempt + 1, body)
+            logger.info("%s: HTTP %s — retrying in %.0fs (attempt %d/%d): %s",
+                        what, exc.code, wait, attempt + 1, attempts - 1,
+                        body[:160])
             time.sleep(wait)
             delay = min(delay * 2, 600)
 
@@ -502,7 +509,7 @@ def submit_gemini(ids: List[str], model: str) -> None:
             f"{_GEMINI_BASE}/v1beta/models/{model}:batchGenerateContent",
             {"batch": {"display_name": display,
                        "input_config": {"file_name": file_name}}},
-        ))
+        ), attempts=30)
         # Pace chunk submissions — the File API rate-limits bursts.
         time.sleep(20)
         batch_name = job.get("name") or job.get("batch", {}).get("name")
