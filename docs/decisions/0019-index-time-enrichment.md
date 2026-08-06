@@ -220,20 +220,48 @@ the eval section names the missing evidence.
 
 ## Results
 
-Recorded after the gated eval below; the run files are
-`search/eval/history/2026-08-06-phase2-*.json` and
-`python -m eval.compare` reproduces the table.
+Judged 2026-08-06 (same UMBRELA judge and append-only qrels as ADR
+0018, pool complete at every point — judged@10 = 1.000). Run files in
+`search/eval/history/`; `python -m eval.compare` reproduces every row.
+Deltas are against the phase-1 gated baseline re-scored on the grown
+pool (0.820–0.822 depending on comparison pool).
 
-| metric | phase-1 baseline | + mined FTS | + enriched embeddings |
+| variant | ΔnDCG@10 | Δcanary recall@10 | trio gate |
 |---|---|---|---|
-| nDCG@10 (graded) | 0.824 | — | — |
-| Recall@10 (grade ≥ 2) | 0.365 | — | — |
-| Canary recall@10 | 0.527 | — | — |
-| pytorch-trio gate | tensorflow only | — | — |
+| mined FTS only, rrf_k=20 | −0.017 (p<0.001) | +0.093 | pass |
+| mined FTS only, rrf_k=50 | +0.010 | +0.028 | pass |
+| + enriched embeddings, rrf_k=20 | −0.011 (p=0.01) | **+0.157** | pass |
+| + enriched embeddings, rrf_k=50 | **+0.018** (p<0.0001) | +0.091 | pass |
 
-*(table filled by the eval run in this phase; the LLM variant's
-column is deliberately absent until its batch is approved and its
-marginal value measured separately.)*
+Readings, recorded plainly:
+
+- **The designed fix works.** The gate query surfaces
+  pytorch + tensorflow + scikit-learn in the top 10 at every point;
+  under enriched embeddings scikit-learn reaches #2 on semantic
+  match, not just lexical coverage.
+- **Enriched embeddings dominate FTS-only at fixed k** (better on
+  both axes) — the docTTTTTquery-lineage claim held for mined text.
+- **rrf_k is a genuine precision↔canon-recall dial**: sharp fusion
+  (k=20) maximises canary recall; flatter fusion (k=50) lets the
+  dense lane counterbalance enrichment-boosted FTS tiers and flips
+  nDCG positive. Both endpoints remain per-request tunable.
+- **The pre-declared ship gate (ΔnDCG ≥ +0.03) was not met** at any
+  swept point; best is +0.018. The canary — the drift-immune,
+  hand-curated denominator this suite exists for — improves at every
+  point, by up to +0.157 (30% relative). The residual nDCG losses
+  concentrate where mined category vocabulary pulls popular adjacent
+  repos above niche-precise ones ("self-hosted X" queries); the
+  coverage cap halved that effect but did not eliminate it.
+  Per-repo generated vocabulary (the LLM variant, unrun) is the
+  designed precision fix and remains gated on its own measured
+  marginal value.
+- **The criticality term did not earn its weight**: w_crit = 0.2 on
+  the enriched configuration measured −0.005 nDCG / +0.010 canary
+  against the same configuration without it — noise-level, slightly
+  precision-negative, consistent with the version-sampled lower
+  bound's ecosystem skew. The default stays 0.0; the recorded upgrade
+  path (OpenSSF criticality_score's aggregated dataset) is the next
+  candidate if the signal is wanted.
 
 ## What would change this decision
 
