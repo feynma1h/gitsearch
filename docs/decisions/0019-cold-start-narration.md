@@ -110,3 +110,40 @@ search and re-time the stages; this file records how.
 Any purchase of warmth (min-instances, pinger) or the ONNX migration —
 each shrinks the wake enough that the narration, and possibly the whole
 staged-wait design, should be re-derived from a fresh measurement.
+
+## Addendum (2026-08-06, later): keep-warm pinger adopted
+
+The owner declined standing spend (min-instances stays 0) and approved
+the keep-warm pinger. One Cloud Scheduler job now POSTs a fixed
+realistic query to `/search` every 10 minutes, exercising the search
+service, the embedding service, and the three-lane SQL — which keeps
+both Cloud Run instances and the Postgres index caches hot:
+
+```
+gcloud scheduler jobs create http keep-warm-search \
+  --project=gitsearch-495722 \
+  --location=asia-southeast1 \
+  --schedule="*/10 * * * *" \
+  --uri="https://gitsearch-search-148185858207.asia-southeast1.run.app/search" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body='{"query":"self hosted note taking app","limit":20,"filters":{"exclude_archived":true},"weights":{"similarity":1.0,"stars":0.3,"recency":0.2}}' \
+  --attempt-deadline=120s
+```
+
+Cost ≈ $0: one job sits inside Cloud Scheduler's three-free-jobs
+allowance (else $0.10/mo), and ~4,400 pings/month cost ~$0.13 at list
+rates, inside Cloud Run's free tier. The 120s attempt deadline
+outlasts the 90s server request cap, so a ping that lands on a
+recycled instance completes the wake instead of timing out. Pinger
+traffic is identifiable in request logs by its
+`Google-Cloud-Scheduler` user agent. This is Cloud Scheduler, not
+GitHub Actions — the repo's Actions crons remain deliberately
+disabled.
+
+First forced ping verified: HTTP 200. The narration keeps its 60–65s
+timing as the safety net for what the pinger cannot prevent — platform
+recycles on deploys and node maintenance. The same day's logs supplied
+a third organic full-cold sample confirming the envelope: 9.8s
+preflight + 55.5s POST (43.6s embedding wake) = 65.3s perceived, told
+honestly by the re-timed stages.
