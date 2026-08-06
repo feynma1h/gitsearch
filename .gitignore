@@ -58,3 +58,5 @@ postgres_data/
 
 # ─── Fly.io local state ──────────────────────────────────────────────────
 .fly/
+# LLM enrichment batch state (operator-local, carries batch ids)
+indexer/pipeline/.llm_batches.json
