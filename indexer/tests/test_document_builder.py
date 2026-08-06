@@ -102,3 +102,43 @@ def test_source_hash_is_deterministic_format():
     assert isinstance(h, str)
     assert all(c in "0123456789abcdef" for c in h)
     assert len(h) == 64  # SHA-256 hex
+
+
+# ---------------------------------------------------------------------------
+# Enrichment-aware documents (ADR 0019, the "+enrich" labels)
+# ---------------------------------------------------------------------------
+
+
+def test_empty_enrichment_is_byte_identical_to_legacy_layout():
+    """The whole copy-instead-of-recompute step rests on this: a repo
+    without enrichment builds the same document under either label."""
+    plain = build_source_text(_repo())
+    with_empty = build_source_text(_repo(
+        aliases=[], categories=[], queries=[], enrichment_description=None,
+    ))
+    assert plain == with_empty
+    assert source_hash(plain) == source_hash(with_empty)
+
+
+def test_enrichment_sections_sit_between_metadata_and_readme():
+    text = build_source_text(_repo(
+        aliases=["Widget Kit"],
+        categories=["Frameworks", "Graphics"],
+        queries=["how to draw widgets"],
+        enrichment_description="The classic widget toolkit.",
+    ))
+    assert "Also known as: Widget Kit" in text
+    assert "Categories: Frameworks, Graphics" in text
+    assert "Common queries: how to draw widgets" in text
+    assert text.index("Topics:") < text.index("Also known as:")
+    assert text.index("The classic widget toolkit.") < text.index("# Widgets")
+
+
+def test_enrichment_description_is_capped():
+    from pipeline.config import ENRICHMENT_DESC_MAX_CHARS
+    text = build_source_text(_repo(
+        readme=None,
+        enrichment_description="d" * (ENRICHMENT_DESC_MAX_CHARS * 2),
+    ))
+    assert text.count("d" * ENRICHMENT_DESC_MAX_CHARS) == 1
+    assert "d" * (ENRICHMENT_DESC_MAX_CHARS + 1) not in text

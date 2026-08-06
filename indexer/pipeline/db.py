@@ -53,11 +53,39 @@ ORDER BY r.stars DESC
 LIMIT $2
 """
 
+# The "+enrich" variant scopes pending to repos that HAVE enrichment
+# rows. Repos without enrichment build byte-identical documents under
+# either label, so their vectors are copied between labels SQL-side
+# (make copy-embeddings-label) instead of being re-embedded; scoping
+# here keeps an enrich-label run proportional to the enriched set and
+# keeps label coverage a controlled experiment (old coverage + nothing
+# else — a never-embedded repo doesn't sneak in just because a run
+# used a bigger --top-n).
+_FETCH_PENDING_ENRICHED_SQL = """
+SELECT
+    r.id,
+    r.full_name,
+    r.description,
+    r.primary_language,
+    r.topics,
+    r.readme
+FROM repositories r
+LEFT JOIN repository_embeddings e
+       ON e.repo_id = r.id AND e.model_name = $1
+WHERE e.repo_id IS NULL
+  AND r.is_archived = FALSE
+  AND r.readme_status IS NOT NULL
+  AND EXISTS (SELECT 1 FROM repository_enrichment en
+              WHERE en.repo_id = r.id)
+ORDER BY r.stars DESC
+LIMIT $2
+"""
 
 async def fetch_pending_repos(
     pool: asyncpg.Pool,
     model_name: str,
     limit: int,
+    include_enrichment: bool = False,
 ) -> List[Tuple[str, RepoForEmbedding]]:
     """Return up to ``limit`` repos that still need embedding for ``model_name``.
 
@@ -67,12 +95,25 @@ async def fetch_pending_repos(
 
     Ordered by stars desc so a partial run captures the most relevant
     repos first.
-    """
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(_FETCH_PENDING_SQL, model_name, limit)
 
-    return [
-        (
+    With ``include_enrichment`` (the "+enrich" labels, ADR 0019) the
+    pending set narrows to enriched repos and each repo carries its
+    enrichment fields for the document builder.
+    """
+    sql = _FETCH_PENDING_ENRICHED_SQL if include_enrichment else _FETCH_PENDING_SQL
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(sql, model_name, limit)
+
+    enrichment: dict = {}
+    if include_enrichment and rows:
+        enrichment = await _fetch_enrichment(
+            pool, [row["id"] for row in rows]
+        )
+
+    out: List[Tuple[str, RepoForEmbedding]] = []
+    for row in rows:
+        extra = enrichment.get(row["id"], {})
+        out.append((
             row["id"],
             RepoForEmbedding(
                 full_name=row["full_name"],
@@ -80,10 +121,54 @@ async def fetch_pending_repos(
                 primary_language=row["primary_language"],
                 topics=list(row["topics"]) if row["topics"] else [],
                 readme=row["readme"],
+                aliases=extra.get("aliases", []),
+                categories=extra.get("categories", []),
+                queries=extra.get("queries", []),
+                enrichment_description=extra.get("description"),
             ),
-        )
-        for row in rows
-    ]
+        ))
+    return out
+
+
+_FETCH_ENRICHMENT_ROWS_SQL = """
+SELECT repo_id, source, description, queries, aliases, categories
+FROM repository_enrichment
+WHERE repo_id = ANY($1::text[])
+ORDER BY repo_id, source
+"""
+
+
+async def _fetch_enrichment(
+    pool: asyncpg.Pool, repo_ids: List[str], chunk: int = 10_000
+) -> dict:
+    """Fetch and fold enrichment rows for ``repo_ids``.
+
+    Folding (array concat in source order, newline-joined descriptions)
+    happens here in Python — at most two short rows per repo, and the
+    dict shape is what RepoForEmbedding wants.
+    """
+    def _merge(slot: dict, row) -> None:
+        for key in ("aliases", "categories", "queries"):
+            for value in (row[key] or []):
+                if value not in slot[key]:
+                    slot[key].append(value)
+        if row["description"]:
+            slot["_descs"].append(row["description"])
+
+    out: dict = {}
+    for i in range(0, len(repo_ids), chunk):
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                _FETCH_ENRICHMENT_ROWS_SQL, repo_ids[i:i + chunk]
+            )
+        for row in rows:
+            slot = out.setdefault(row["repo_id"], {
+                "aliases": [], "categories": [], "queries": [], "_descs": [],
+            })
+            _merge(slot, row)
+    for slot in out.values():
+        slot["description"] = "\n".join(slot.pop("_descs")) or None
+    return out
 
 
 _UPSERT_EMBEDDING_SQL = """

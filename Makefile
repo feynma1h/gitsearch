@@ -54,10 +54,14 @@ migrate: ## Apply all SQL migrations in order (requires psql on host).
 	$(PSQL) "$(DATABASE_URL)" -f sql/0006_repository_guides.sql
 	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0007_search_lanes.sql
 	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0008_search_tsv_light.sql
+	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0009_repository_enrichment.sql
+	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0010_repository_signals.sql
 
 # 0007/0008 rewrite the repositories table (generated tsvector columns),
 # which runs for minutes — that needs a session-mode connection on
-# Supabase, same reasoning as HNSW_DATABASE_URL below.
+# Supabase, same reasoning as HNSW_DATABASE_URL below. 0009/0010 don't
+# rewrite anything but do build indexes past the pooler's statement
+# timeout, so they ride the same connection.
 MIGRATE_REWRITE_DATABASE_URL ?= $(subst :6543/,:5432/,$(DATABASE_URL))
 
 .PHONY: migrate-compose
@@ -70,13 +74,15 @@ migrate-compose: ## Apply migrations via the postgres container (no host psql ne
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0006_repository_guides.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0007_search_lanes.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0008_search_tsv_light.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0009_repository_enrichment.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0010_repository_signals.sql
 
 .PHONY: reset-db
 reset-db: ## DESTRUCTIVE: drop every project table, then re-apply migrations. Wipes the corpus.
 	@echo "This will DROP ALL DATA in $(DATABASE_URL) and re-create empty tables."
 	@echo "Press Ctrl-C within 5s to abort."
 	@sleep 5
-	$(PSQL) "$(DATABASE_URL)" -c "DROP TABLE IF EXISTS repository_guides, repository_embeddings, crawl_state, refresh_watermarks, repositories CASCADE;"
+	$(PSQL) "$(DATABASE_URL)" -c "DROP TABLE IF EXISTS repository_enrichment, repository_signals, repository_guides, repository_embeddings, crawl_state, refresh_watermarks, repositories CASCADE;"
 	$(MAKE) migrate
 
 # ---------------------------------------------------------------------------
@@ -98,6 +104,14 @@ readmes: ## Fetch READMEs for the top-N repos. Resumable. Defaults to top 20K.
 .PHONY: index
 index: ## Embed repos and write to repository_embeddings. Resumable.
 	cd indexer && $(PYTHON) -m pipeline.main --top-n 20000
+
+.PHONY: mine-awesome
+mine-awesome: ## Mine awesome-list READMEs into repository_enrichment (full re-mine, idempotent).
+	cd crawler && $(PYTHON) -m src.mine_awesome
+
+.PHONY: signals
+signals: ## Ingest deps.dev signals (scorecards corpus-wide, dependents for the top repos).
+	cd crawler && $(PYTHON) -m src.deps_dev_pass --scorecard-all
 
 .PHONY: audit
 audit: ## Read-only report: what's uploaded vs still pending in each stage.
@@ -133,23 +147,74 @@ build-hnsw: ## (Re)build the HNSW index after bulk embedding. Search stays up bu
 	        USING hnsw (embedding vector_cosine_ops) \
 	        WITH (m = 16, ef_construction = 64);"
 
+# --- Versioned embedding labels (ADR 0019) ---------------------------------
+# Enriched vectors live under their own model_name label beside the
+# originals (ADR 0006 keying); serving flips labels via the search
+# service's EMBEDDINGS_MODEL_LABEL env var. The full workflow:
+#   1. make build-hnsw-halfvec                   (partial index, base label)
+#   2. deploy the literal-label service; then:
+#      make drop-hnsw-halfvec-full CONFIRM=yes   (retire the label-blind index)
+#   3. make copy-embeddings-label                (unenriched repos: copy, don't recompute)
+#   4. make index-enriched                       (enriched repos: embed enriched docs)
+#   5. make build-hnsw-halfvec HNSW_LABEL='$(ENRICH_LABEL)' HNSW_LABEL_SUFFIX=enrich_v1
+# Step order matters: 3 and 4 bulk-insert under the new label, which
+# must happen while NO HNSW index covers those rows (per-row graph
+# insertion turns a minutes-long copy into hours) — the per-label
+# partial indexes are what make that true.
+BASE_LABEL   ?= BAAI/bge-small-en-v1.5
+ENRICH_LABEL ?= BAAI/bge-small-en-v1.5+enrich-v1
+HNSW_LABEL        ?= $(BASE_LABEL)
+HNSW_LABEL_SUFFIX ?= base
+
 .PHONY: build-hnsw-halfvec
-build-hnsw-halfvec: ## Build the half-precision HNSW expression index the search service queries (ADR 0018). Same recipe as build-hnsw.
+build-hnsw-halfvec: ## Build the per-label partial halfvec HNSW index (ADR 0018/0019). Vars: HNSW_LABEL, HNSW_LABEL_SUFFIX.
 	# Embeddings are L2-normalised (the embedding service passes
 	# normalize_embeddings=True), so inner product ranks identically to
 	# cosine and halfvec_ip_ops is the cheaper operator. The index is on
-	# an expression, so queries must ORDER BY
-	# (embedding::halfvec(384)) <#> $$q::halfvec(384) to use it — which
-	# is exactly what search/service/db.py does.
+	# an expression AND partial per label, so queries must ORDER BY
+	# (embedding::halfvec(384)) <#> $$q::halfvec(384) with the label as
+	# a LITERAL in the WHERE (a bound parameter can't match a partial
+	# index predicate at plan time) — which is exactly what
+	# search/service/db.py does.
 	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
 		-c "SET statement_timeout = 0;" \
 		-c "SET maintenance_work_mem = '$(HNSW_MAINTENANCE_WORK_MEM)';" \
 		-c "SET max_parallel_maintenance_workers = 0;" \
-		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw_halfvec;" \
-		-c "CREATE INDEX CONCURRENTLY idx_repository_embeddings_hnsw_halfvec \
+		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw_halfvec_$(HNSW_LABEL_SUFFIX);" \
+		-c "CREATE INDEX CONCURRENTLY idx_repository_embeddings_hnsw_halfvec_$(HNSW_LABEL_SUFFIX) \
 	        ON repository_embeddings \
 	        USING hnsw ((embedding::halfvec(384)) halfvec_ip_ops) \
-	        WITH (m = 16, ef_construction = 64);"
+	        WITH (m = 16, ef_construction = 64) \
+	        WHERE model_name = '$(HNSW_LABEL)';"
+
+.PHONY: drop-hnsw-halfvec-full
+drop-hnsw-halfvec-full: ## Drop the label-blind halfvec index once the literal-label service is live. Guarded: CONFIRM=yes.
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "This drops idx_repository_embeddings_hnsw_halfvec (the label-blind halfvec index)."; \
+		echo "Only do this after the literal-label service is live and verified"; \
+		echo "(otherwise the deployed dense lane loses its index and seq-scans)."; \
+		echo "Re-run with: make drop-hnsw-halfvec-full CONFIRM=yes"; \
+		exit 1; \
+	fi
+	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
+		-c "SET statement_timeout = 0;" \
+		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw_halfvec;"
+
+.PHONY: copy-embeddings-label
+copy-embeddings-label: ## Copy unenriched repos' vectors BASE_LABEL -> ENRICH_LABEL (identical documents embed identically; no recompute).
+	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
+		-c "SET statement_timeout = 0;" \
+		-c "INSERT INTO repository_embeddings (repo_id, model_name, embedding, source_hash, embedded_at) \
+		    SELECT e.repo_id, '$(ENRICH_LABEL)', e.embedding, e.source_hash, e.embedded_at \
+		    FROM repository_embeddings e \
+		    WHERE e.model_name = '$(BASE_LABEL)' \
+		      AND NOT EXISTS (SELECT 1 FROM repository_enrichment en \
+		                      WHERE en.repo_id = e.repo_id) \
+		    ON CONFLICT (repo_id, model_name) DO NOTHING;"
+
+.PHONY: index-enriched
+index-enriched: ## Embed enriched repos' enrichment-aware docs under ENRICH_LABEL. Run copy-embeddings-label first.
+	cd indexer && EMBEDDINGS_MODEL_LABEL='$(ENRICH_LABEL)' $(PYTHON) -m pipeline.main --top-n 300000
 
 .PHONY: drop-hnsw-fp32
 drop-hnsw-fp32: ## Drop the fp32 HNSW index once halfvec recall parity is verified live. Guarded: run with CONFIRM=yes.

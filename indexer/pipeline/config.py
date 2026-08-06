@@ -10,15 +10,30 @@ See ../docs/decisions/ for the rationale behind each value.
 
 from __future__ import annotations
 
+import os
+
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
 
-# The embedding model. Must match what the embedding service is loading.
-# Used as the `model_name` in repository_embeddings rows so we can A/B test
-# models side-by-side. See ADR 0006 (separate embeddings table) and ADR 0007
-# (model choice).
-MODEL_NAME: str = "BAAI/bge-small-en-v1.5"
+# The *storage label* written to repository_embeddings.model_name (ADR
+# 0006 keys rows by (repo_id, model_name) so labels sit side by side).
+# The default names the raw encoder; a label containing "+enrich"
+# (e.g. "BAAI/bge-small-en-v1.5+enrich-v1") means "the same encoder
+# over enrichment-aware documents" — the pipeline then folds
+# repository_enrichment text into each source document (ADR 0019) and
+# records vectors under the versioned label, leaving the originals
+# untouched. Serving flips between labels via the search service's own
+# EMBEDDINGS_MODEL_LABEL; rollback is that config change.
+#
+# The encoder itself NEVER changes with the label — the embedding
+# service loads its model from its own EMBEDDING_MODEL env var, and
+# query vectors must share the document vectors' space.
+MODEL_NAME: str = os.getenv("EMBEDDINGS_MODEL_LABEL", "BAAI/bge-small-en-v1.5")
+
+# Labels carrying this marker embed enrichment-aware documents.
+ENRICH_LABEL_MARKER: str = "+enrich"
+INCLUDE_ENRICHMENT: bool = ENRICH_LABEL_MARKER in MODEL_NAME
 
 # Vector dimension produced by the model. Hard-coded because it's also
 # baked into the SQL schema (vector(384)). Changing the model usually means
@@ -45,6 +60,13 @@ DEFAULT_WORKERS: int = 4
 # internally, but capping client-side reduces network bytes. We cap a bit
 # above the model's effective window to give it some room.
 SOURCE_TEXT_MAX_CHARS: int = 2_500
+
+# Enrichment text is prepended ahead of the README (signal-rich fields
+# first, ADR 0008), so inside the model's ~2000-char window it competes
+# with README head. Aliases/categories/queries lines are short; the
+# mined description block is the one that can run long (up to 1,200
+# stored chars), so it gets its own cap to leave the README real room.
+ENRICHMENT_DESC_MAX_CHARS: int = 600
 
 # ---------------------------------------------------------------------------
 # Service

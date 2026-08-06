@@ -32,6 +32,7 @@ from .config import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_SERVICE_URL,
     DEFAULT_WORKERS,
+    INCLUDE_ENRICHMENT,
     MODEL_NAME,
 )
 from .db import create_pool, fetch_pending_repos
@@ -81,14 +82,17 @@ async def _run(args: argparse.Namespace) -> None:
     service_url = os.environ.get("EMBEDDING_SERVICE_URL", DEFAULT_SERVICE_URL)
     pool = await create_pool()
 
-    pending = await fetch_pending_repos(pool, MODEL_NAME, args.top_n)
+    pending = await fetch_pending_repos(
+        pool, MODEL_NAME, args.top_n, include_enrichment=INCLUDE_ENRICHMENT,
+    )
     if not pending:
         logger.info("No pending repos. Nothing to do.")
         await pool.close()
         return
 
     logger.info(
-        "Loaded %d pending repos for model=%s.", len(pending), MODEL_NAME,
+        "Loaded %d pending repos for model=%s (enrichment=%s).",
+        len(pending), MODEL_NAME, "on" if INCLUDE_ENRICHMENT else "off",
     )
 
     queue: asyncio.Queue = asyncio.Queue()
