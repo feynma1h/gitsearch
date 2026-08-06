@@ -57,7 +57,13 @@ class ReadmeResult:
 
 
 class ReadmeClient:
-    """Async client for fetching one repo's README via REST."""
+    """Async client for fetching one repo's README via REST.
+
+    ``max_chars`` / ``download_cap_bytes`` default to the corpus storage
+    policy; the awesome-list miner passes larger caps because it parses
+    the *full* file transiently and stores only what it mines
+    (migration 0009), never the README itself.
+    """
 
     BASE_URL = "https://api.github.com"
 
@@ -66,10 +72,15 @@ class ReadmeClient:
         session: aiohttp.ClientSession,
         token: str,
         limiter: RateLimiter,
+        *,
+        max_chars: int = README_MAX_CHARS,
+        download_cap_bytes: int = README_DOWNLOAD_CAP_BYTES,
     ) -> None:
         self._session = session
         self._token = token
         self._limiter = limiter
+        self._max_chars = max_chars
+        self._download_cap_bytes = download_cap_bytes
 
     async def fetch(self, owner: str, repo: str) -> ReadmeResult:
         """Fetch the README for one repo. Never raises on per-repo failures.
@@ -194,7 +205,7 @@ class ReadmeClient:
                 error_detail=f"base64 decode failed: {exc}",
             )
 
-        return _finalize(raw)
+        return _finalize(raw, self._max_chars)
 
     async def _fetch_raw(self, url: str, headers: dict) -> ReadmeResult:
         """Stream a large README via its download_url, capping bytes read."""
@@ -209,21 +220,21 @@ class ReadmeClient:
                         status="error",
                         error_detail=f"raw fetch HTTP {resp.status}",
                     )
-                raw = await resp.content.read(README_DOWNLOAD_CAP_BYTES)
+                raw = await resp.content.read(self._download_cap_bytes)
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             return ReadmeResult(
                 status="error",
                 error_detail=f"raw fetch error: {exc}",
             )
 
-        return _finalize(raw)
+        return _finalize(raw, self._max_chars)
 
 
-def _finalize(raw: bytes) -> ReadmeResult:
-    """Decode bytes to UTF-8, classify empty, and truncate to the storage cap."""
+def _finalize(raw: bytes, max_chars: int = README_MAX_CHARS) -> ReadmeResult:
+    """Decode bytes to UTF-8, classify empty, and truncate to the cap."""
     text = raw.decode("utf-8", errors="replace").strip()
     if not text:
         return ReadmeResult(status="empty")
-    if len(text) > README_MAX_CHARS:
-        text = text[:README_MAX_CHARS]
+    if len(text) > max_chars:
+        text = text[:max_chars]
     return ReadmeResult(status="ok", content=text)
