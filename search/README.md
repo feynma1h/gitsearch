@@ -50,19 +50,31 @@ A request goes through three stages:
    - *Full-text* — matches content terms in name/topics/language/
      description (and full websearch matches anywhere, README
      included), ordered by how many query terms a repo covers, then by
-     stars within each coverage tier.
-   - *Dense* — pgvector KNN over a half-precision HNSW expression
-     index; iterative scans keep filtered searches from running short.
+     stars within each coverage tier. Coverage also counts terms from
+     the repo's *enrichment* — category labels and descriptions mined
+     from the awesome lists that link it (plus optional LLM-generated
+     text), stored in their own table — capped at completing one term,
+     so curation can supply the word a repo's metadata lacks
+     ("framework" for pytorch) but never carry a match alone.
+   - *Dense* — pgvector KNN over a half-precision HNSW index, partial
+     per embedding label (enriched documents embed under a versioned
+     label beside the originals; config picks which one serves);
+     iterative scans keep filtered searches from running short.
    - *Name* — pg_trgm exact / prefix / fuzzy matching on the repo
      name, so typos ("pytorhc") still land.
 3. **Fusion + blend.** Lanes merge via weighted RRF (`w/(k + rank)`),
    then the final order is
-   `relevance + w_pop·sat(stars) + w_rec·recency`, where `sat(x) =
-   x/(x + pivot)` saturates popularity (megastars can't drown
-   relevance) and recency has a floor (finished classics don't sink).
-   A query that exactly matches a repo's name sorts that repo first,
-   popularity-independent. Archived repos and forks are demoted.
-   See [ADR 0018](../docs/decisions/0018-three-lane-hybrid-retrieval.md).
+   `relevance + w_pop·sat(stars) + w_rec·recency (+ w_crit·sat(dependents))`,
+   where `sat(x) = x/(x + pivot)` saturates popularity (megastars
+   can't drown relevance), recency has a floor (finished classics
+   don't sink), and the criticality term — how many published packages
+   depend on the repo, from deps.dev — ships with weight 0 until the
+   eval promotes it. A query that exactly matches a repo's name —
+   punctuation-insensitively, so "nextjs" finds next.js — sorts that
+   repo first, popularity-independent. Archived repos and forks are
+   demoted.
+   See [ADR 0018](../docs/decisions/0018-three-lane-hybrid-retrieval.md)
+   and [ADR 0019](../docs/decisions/0019-index-time-enrichment.md).
 
 ## Setup
 
@@ -104,6 +116,7 @@ POST /search   {
                    "similarity":     1.0,         # weight of fused relevance
                    "stars":          0.3,
                    "recency":        0.2,
+                   "criticality":    0.0,         # sat(deps.dev dependents); dark by default
                    "half_life_days": 365,
                    "full_text_weight": 1.0,       # RRF lane weights + k —
                    "semantic_weight":  1.0,       # exposed for eval sweeps;
@@ -118,9 +131,10 @@ Each hit returns: `repo_id`, `full_name`, `description`, `url`,
 `primary_language`, `topics`, `stars`, `pushed_at`, `similarity`
 (0..1, raw cosine — 0.0 for repos without an embedding, which the
 lexical lanes can still surface), `exact_name` (query is exactly this
-repo's name), `hybrid_score` (the ranking key), and the three
-`*_contribution` fields (relevance / stars / recency shares that sum
-to `hybrid_score` — what the frontend's "why this rank?" bar draws).
+repo's name), `hybrid_score` (the ranking key), and the four
+`*_contribution` fields (relevance / stars / recency / criticality
+shares that sum to `hybrid_score` — what the frontend's "why this
+rank?" bar draws; criticality is 0.0 while its weight ships dark).
 
 ```
 GET  /guide/{repo_id}
