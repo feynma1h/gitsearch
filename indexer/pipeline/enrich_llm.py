@@ -106,13 +106,17 @@ BATCH_CHUNK = 10_000          # requests per Messages Batch (API max 100K)
 STATE_FILE = Path(__file__).parent / ".llm_batches.json"
 
 # Pricing per MTok for the estimate, batch rates (50% of standard).
-# Anthropic rates from the vendor pricing table 2026-06; the Gemini
-# flash-lite figure is the interactive $0.10/$0.40 tier halved.
+# Anthropic rates from the vendor pricing table 2026-06; Gemini rates
+# from ai.google.dev/gemini-api/docs/pricing, verified 2026-08-07 —
+# an earlier revision carried the RETIRED 2.5-flash-lite tier's rates
+# ($0.05/$0.20) against the 3.1 model and under-estimated the corpus
+# run 3.6x. Estimates must price the model actually named, not its
+# lineage.
 _BATCH_PRICES = {
     "claude-haiku-4-5": (0.50, 2.50),
     "claude-sonnet-5": (1.50, 7.50),
     "claude-opus-5": (2.50, 12.50),
-    "gemini-3.1-flash-lite": (0.05, 0.20),
+    "gemini-3.1-flash-lite": (0.125, 0.75),
 }
 # Rough per-repo token shape measured on representative docs: the
 # system prompt + a ~2,000-char document in, a JSON payload out.

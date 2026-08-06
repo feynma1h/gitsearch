@@ -156,19 +156,32 @@ within cosine ≥ 0.45 of their source document (the consistency filter
 that made Doc2Query-- beat unfiltered expansion). Submission requires
 an explicit `--i-approve-the-cost` flag after a printed estimate.
 
-Provider economics decided the run (user-approved 2026-08-06): the
-full ~244K-repo corpus costs ~$25 on `gemini-3.1-flash-lite` batch
-versus ~$250 on Haiku 4.5 — a 10× premium whose only purchase is
-keeping the generator outside the eval judge's model family. The
-$25 path was approved **with the family conflict handled as a
-measured control rather than a caveat**: after the LLM variant's
-eval, a ~300-pair sample of the pairs where enriched documents won is
-re-judged by a second-family judge (Haiku), and divergence between
-the judges marks the graded numbers as soft. The canary suite —
-hand-curated, judge-free — remains the primary anchor either way,
-per the eval README's own drift rule. A 100-repo validation batch
-preceded the full submit: 100/100 parsed, zero consistency-filter
-drops, average 6.7 queries per repo.
+Provider economics decided the run (user-approved 2026-08-06): Gemini
+flash-lite batch versus a multiple-of-cost premium on Haiku 4.5 whose
+only purchase is keeping the generator outside the eval judge's model
+family. The Gemini path was approved **with the family conflict
+handled as a measured control rather than a caveat**: after the LLM
+variant's eval, a ~300-pair sample of the pairs where enriched
+documents won is re-judged by a second-family judge (Haiku), and
+divergence between the judges marks the graded numbers as soft. The
+canary suite — hand-curated, judge-free — remains the primary anchor
+either way, per the eval README's own drift rule. A 100-repo
+validation batch preceded the full submit: 100/100 parsed, zero
+consistency-filter drops, average 6.7 queries per repo.
+
+**Cost correction (2026-08-07, recorded because the paper trail
+should show real numbers):** the run was initially estimated at ~$24
+using the retired 2.5-flash-lite tier's batch rates ($0.05/$0.20 per
+MTok) against the 3.1-flash-lite model actually being run — whose
+true batch rates are $0.125/$0.75. Measured full-corpus cost:
+**~$69** (per-repo ~1,009 tokens in / 208 out, thinking pinned to
+zero and verified zero in usage metadata). The user re-approved
+completion at the corrected figure mid-run. Two quota mechanics also
+shaped the run and are worth a future reader's minute: Tier-1
+flash-lite batch allows only 10M enqueued tokens (jobs above ~9K
+requests are unlaunchable — the drain runs sequential 8K chunks),
+and prepaid-credit depletion doesn't fail queued batch jobs, it
+silently parks them until topped up.
 
 ## Alternatives considered
 
