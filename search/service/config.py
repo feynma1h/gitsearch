@@ -100,7 +100,13 @@ NAME_FUZZY_MAX_TOKENS: int = 2
 # already-good top ordering, while flat fusion hands the decision to
 # cross-lane agreement, which favors listicle-style repos. The eval
 # harness can still sweep it per-request.
-RRF_K: int = 20
+#
+# Env-overridable since phase 2: with enrichment on, k becomes a
+# precision↔canon-recall dial (ADR 0019 measured k=20 at canary +0.157
+# / nDCG −0.011 vs k=50 at +0.091 / +0.018 under enriched embeddings),
+# so the serving default can move with the enrichment flags in one
+# config change.
+RRF_K: int = int(os.getenv("SEARCH_RRF_K", "20"))
 FULL_TEXT_WEIGHT: float = 1.0
 SEMANTIC_WEIGHT: float = 1.0
 # The name lane mostly re-confirms repos the other lanes already found
