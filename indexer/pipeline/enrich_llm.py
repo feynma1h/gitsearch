@@ -645,8 +645,31 @@ class _CollectStats:
 # measured at ~60 min per 8K-result batch: one embed call per repo
 # plus one INSERT round-trip per row over ~350ms WAN RTT. Grouping
 # repos per embed call and using executemany turns that into ~4-5 min.
-_FILTER_GROUP_REPOS = 16       # repos per /embed call (~130 texts)
+_FILTER_GROUP_REPOS = 32       # repos per /embed call (queries only, ~220 short texts)
 _UPSERT_FLUSH_ROWS = 500       # rows per executemany round trip
+
+
+_FETCH_BASE_VECTORS_SQL = """
+SELECT repo_id, embedding::text AS vec
+FROM repository_embeddings
+WHERE model_name = 'BAAI/bge-small-en-v1.5' AND repo_id = ANY($1::text[])
+"""
+
+
+async def _fetch_base_vectors(pool, repo_ids) -> Dict[str, List[float]]:
+    """Stored document vectors for the consistency filter. The corpus
+    already holds a bge-small vector for every generated repo (the base
+    label covers the same readme_status population the generator
+    selects) — re-embedding 2,500-char documents locally just to score
+    queries against them was the collect pipeline's compute floor."""
+    out: Dict[str, List[float]] = {}
+    ids = list(repo_ids)
+    for i in range(0, len(ids), 10_000):
+        rows = await pool.fetch(_FETCH_BASE_VECTORS_SQL, ids[i:i + 10_000])
+        for row in rows:
+            out[row["repo_id"]] = [float(x) for x in
+                                   row["vec"].strip("[]").split(",")]
+    return out
 
 
 async def _process_payloads_bulk(
@@ -654,40 +677,46 @@ async def _process_payloads_bulk(
     stats: _CollectStats,
 ) -> None:
     """Sanitize + Doc2Query--filter + upsert a whole batch of
-    generations. ``items`` is a list of (repo_id, doc_text, payload).
+    generations. ``items`` is a list of (repo_id, payload).
 
-    Phase 1 groups many repos' (doc + queries) texts into single embed
-    calls; phase 2 flushes rows with executemany. Same semantics as
-    the old per-repo path, two orders of magnitude fewer round trips.
+    Document vectors come from repository_embeddings (base label);
+    only the generated queries — short texts — are embedded here, in
+    large groups; rows flush through executemany. Repos missing a
+    stored vector (shouldn't happen; the populations match) keep their
+    queries unfiltered rather than losing them.
     """
-    prepared = []       # (repo_id, description, queries, aliases, cats)
+    doc_vecs = await _fetch_base_vectors(pool, [r for r, _ in items])
+
+    prepared = []       # rows for executemany
     for group_start in range(0, len(items), _FILTER_GROUP_REPOS):
         group = items[group_start:group_start + _FILTER_GROUP_REPOS]
         texts: List[str] = []
-        spans = []       # (repo_id, doc_index, [query_indices], payload)
-        for repo_id, doc, payload in group:
+        spans = []       # (repo_id, [query_indices], payload)
+        for repo_id, payload in group:
             queries = _sane_strings(payload.get("queries", []), MAX_QUERIES, 120)
-            doc_idx = len(texts)
-            texts.append(doc)
             q_idx = []
             for q in queries:
                 q_idx.append(len(texts))
                 texts.append(q)
-            spans.append((repo_id, doc_idx, q_idx, payload))
-        vectors = await embedder.embed(texts)
+            spans.append((repo_id, q_idx, payload))
+        vectors = await embedder.embed(texts) if texts else []
 
-        for repo_id, doc_idx, q_idx, payload in spans:
-            doc_vec = vectors[doc_idx]
-            norm_d = math.sqrt(sum(x * x for x in doc_vec)) or 1.0
+        for repo_id, q_idx, payload in spans:
+            doc_vec = doc_vecs.get(repo_id)
             kept = []
-            for qi in q_idx:
-                vec = vectors[qi]
-                norm_q = math.sqrt(sum(x * x for x in vec)) or 1.0
-                cos = sum(a * b for a, b in zip(doc_vec, vec)) / (norm_d * norm_q)
-                if cos >= QUERY_MIN_COSINE:
-                    kept.append(texts[qi])
-                else:
-                    stats.dropped_queries += 1
+            if doc_vec is None:
+                kept = [texts[qi] for qi in q_idx]   # unfilterable; keep
+            else:
+                norm_d = math.sqrt(sum(x * x for x in doc_vec)) or 1.0
+                for qi in q_idx:
+                    vec = vectors[qi]
+                    norm_q = math.sqrt(sum(x * x for x in vec)) or 1.0
+                    cos = sum(a * b for a, b in zip(doc_vec, vec)) \
+                        / (norm_d * norm_q)
+                    if cos >= QUERY_MIN_COSINE:
+                        kept.append(texts[qi])
+                    else:
+                        stats.dropped_queries += 1
             description = " ".join(
                 str(payload.get("description", "")).split()
             )[:800] or None
@@ -750,11 +779,10 @@ async def collect(model_hint: Optional[str]) -> None:
                             "batch %s succeeded but no responses file "
                             "found — inspect the resource", entry["id"])
                         continue
-                    docs = await _fetch_docs(pool, repo_ids.values())
                     items = [
-                        (repo_ids[key], docs[repo_ids[key]], payload)
+                        (repo_ids[key], payload)
                         for key, payload in _gemini_results(responses_file)
-                        if payload is not None and repo_ids.get(key) in docs
+                        if payload is not None and key in repo_ids
                     ]
                     await _process_payloads_bulk(
                         pool, embedder, items, entry["model"],
@@ -771,7 +799,6 @@ async def collect(model_hint: Optional[str]) -> None:
                             batch.request_counts.processing,
                         )
                         continue
-                    docs = await _fetch_docs(pool, repo_ids.values())
                     items = []
                     for result in anthropic_client.messages.batches.results(
                             entry["id"]):
@@ -780,7 +807,7 @@ async def collect(model_hint: Optional[str]) -> None:
                                            result.result.type)
                             continue
                         repo_id = repo_ids.get(result.custom_id)
-                        if repo_id is None or repo_id not in docs:
+                        if repo_id is None:
                             continue
                         message = result.result.message
                         if message.stop_reason == "refusal":
@@ -795,7 +822,7 @@ async def collect(model_hint: Optional[str]) -> None:
                             logger.warning("%s: unparseable output",
                                            result.custom_id)
                             continue
-                        items.append((repo_id, docs[repo_id], payload))
+                        items.append((repo_id, payload))
                     await _process_payloads_bulk(
                         pool, embedder, items, entry["model"],
                         entry["prompt_version"], stats,
