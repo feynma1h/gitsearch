@@ -146,21 +146,29 @@ against another label's index. Serving flips labels with the
 `EMBEDDINGS_MODEL_LABEL` env var; rollback is the same var pointed
 back.
 
-### e. LLM generation exists, gated on spend approval
+### e. LLM generation: full corpus on Gemini, with a second-family control
 
 `indexer/pipeline/enrich_llm.py` implements the Doc2Query-- design:
-Message Batches (50% discount) + structured outputs produce 5-8
-synthetic queries, an ≤80-word plain-vocabulary description, aliases,
-and category tags per repo; generated queries are kept only if they
-embed within cosine ≥ 0.45 of their source document (the consistency
-filter that made Doc2Query-- beat unfiltered expansion). Haiku 4.5 by
-default — the project's established cheap tier and, deliberately, not
-the eval judge's family (Gemini), preserving ADR 0018's
-judge-independence rule. Submission requires an explicit
-`--i-approve-the-cost` flag after a printed estimate (~$22 for the
-top-20K at Haiku batch rates); nothing was submitted in this phase.
-Its marginal value over mining alone is to be measured, not assumed —
-the eval section names the missing evidence.
+batch APIs (50% discount) + structured outputs produce 5-8 synthetic
+queries, an ≤80-word plain-vocabulary description, aliases, and
+category tags per repo; generated queries are kept only if they embed
+within cosine ≥ 0.45 of their source document (the consistency filter
+that made Doc2Query-- beat unfiltered expansion). Submission requires
+an explicit `--i-approve-the-cost` flag after a printed estimate.
+
+Provider economics decided the run (user-approved 2026-08-06): the
+full ~244K-repo corpus costs ~$25 on `gemini-3.1-flash-lite` batch
+versus ~$250 on Haiku 4.5 — a 10× premium whose only purchase is
+keeping the generator outside the eval judge's model family. The
+$25 path was approved **with the family conflict handled as a
+measured control rather than a caveat**: after the LLM variant's
+eval, a ~300-pair sample of the pairs where enriched documents won is
+re-judged by a second-family judge (Haiku), and divergence between
+the judges marks the graded numbers as soft. The canary suite —
+hand-curated, judge-free — remains the primary anchor either way,
+per the eval README's own drift rule. A 100-repo validation batch
+preceded the full submit: 100/100 parsed, zero consistency-filter
+drops, average 6.7 queries per repo.
 
 ## Alternatives considered
 
