@@ -4,7 +4,7 @@ A single entry point: given a query (text + vector) + filters + weights,
 return the top-N repos ranked by the hybrid blend.
 
 Retrieval is three lanes in one SQL statement (ADR 0018; enrichment
-arms added by ADR 0019 behind config.PHASE2_RETRIEVAL):
+arms added by ADR 0020 behind config.PHASE2_RETRIEVAL):
 
   1. Full-text — matches any content lexeme in the README-free light
      fields (``search_tsv_light``: name, topics, language, description)
@@ -176,7 +176,7 @@ async def create_pool() -> asyncpg.Pool:
 #              even when it carries only one of the query's terms —
 #              pytorch's mined "Frameworks" category is one term of
 #              "machine learning framework python", and that one term
-#              is the whole point (ADR 0019).
+#              is the whole point (ADR 0020).
 #   lexemes  — the first 8 content lexemes; Python binds each into its
 #              own slot so the lane can count per-row term coverage
 #              with plain @@ tests (no per-row parsing or ranking
@@ -374,7 +374,7 @@ ORDER BY rk.exact_name DESC, rk.hybrid_score DESC, rk.stars DESC
 """
 
 # The two fts_hits inner shapes. Phase 1 is the ADR 0018 statement
-# verbatim. Phase 2 (ADR 0019) folds repository_enrichment in without
+# verbatim. Phase 2 (ADR 0020) folds repository_enrichment in without
 # giving up phase 1's execution shape (coverage evaluated inline during
 # ONE bitmap heap scan — the measured-fast plan): the first arm is that
 # same scan hash-LEFT-JOINed against the small per-repo enrichment

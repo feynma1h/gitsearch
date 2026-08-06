@@ -1,5 +1,5 @@
 -- Migration 0010: repository_signals — external criticality signals
--- from deps.dev (search v2 phase 2; ADR 0019).
+-- from deps.dev (search v2 phase 2; ADR 0020).
 --
 -- "How many published packages actually depend on this repo" is the
 -- authority signal stars can't fake (6M purchased stars were documented

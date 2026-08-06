@@ -1,7 +1,7 @@
 """Tests for the pure helper functions in service/db.py — the pieces
 of the retrieval SQL's input preparation that Python owns: coverage
 slot construction, the fuzzy-arm gate, LIKE-pattern escaping, and the
-two-variant SQL builder (ADR 0019).
+two-variant SQL builder (ADR 0020).
 """
 
 from __future__ import annotations

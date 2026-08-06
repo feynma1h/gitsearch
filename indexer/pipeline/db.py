@@ -98,7 +98,7 @@ async def fetch_pending_repos(
     Ordered by stars desc so a partial run captures the most relevant
     repos first.
 
-    With ``include_enrichment`` (the "+enrich" labels, ADR 0019) the
+    With ``include_enrichment`` (the "+enrich" labels, ADR 0020) the
     pending set narrows to enriched repos and each repo carries its
     enrichment fields for the document builder.
     """

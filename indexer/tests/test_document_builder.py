@@ -105,7 +105,7 @@ def test_source_hash_is_deterministic_format():
 
 
 # ---------------------------------------------------------------------------
-# Enrichment-aware documents (ADR 0019, the "+enrich" labels)
+# Enrichment-aware documents (ADR 0020, the "+enrich" labels)
 # ---------------------------------------------------------------------------
 
 

@@ -198,7 +198,7 @@ def test_recency_custom_half_life():
 def test_exact_name_matches_bare_name_and_full_name():
     assert is_exact_name("pytorch", full_name="pytorch/pytorch", name="pytorch")
     assert is_exact_name("Helm/Helm", full_name="helm/helm", name="helm")
-    # Punctuation-normalised matches (ADR 0019): typing "nextjs" IS
+    # Punctuation-normalised matches (ADR 0020): typing "nextjs" IS
     # typing next.js's name.
     assert is_exact_name("nextjs", full_name="vercel/next.js", name="next.js")
     assert is_exact_name("scikitlearn",
@@ -220,7 +220,7 @@ def test_demotion_factors():
 
 
 # ---------------------------------------------------------------------------
-# Criticality (sat(dependents), ADR 0019)
+# Criticality (sat(dependents), ADR 0020)
 # ---------------------------------------------------------------------------
 
 def test_saturate_dependents_none_and_zero_score_zero():

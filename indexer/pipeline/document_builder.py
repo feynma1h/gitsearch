@@ -24,7 +24,7 @@ class RepoForEmbedding:
     Lives here (not in db.py) because the document builder is the only
     consumer and it makes the test surface trivially clean.
 
-    The four enrichment fields (ADR 0019) are empty unless the pipeline
+    The four enrichment fields (ADR 0020) are empty unless the pipeline
     runs under a "+enrich" label — with them empty the document is
     byte-identical to the pre-enrichment layout, which is what lets
     unchanged repos' vectors be *copied* between labels instead of

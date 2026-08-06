@@ -42,7 +42,7 @@ ENCODER_NAME: str = MODEL_NAME.split("+", 1)[0]
 EMBEDDING_DIM: int = 384
 
 # ---------------------------------------------------------------------------
-# Phase-2 retrieval (enrichment lane + name normalisation; ADR 0019)
+# Phase-2 retrieval (enrichment lane + name normalisation; ADR 0020)
 # ---------------------------------------------------------------------------
 
 # Master switch for the phase-2 retrieval additions: the enrichment
@@ -102,7 +102,7 @@ NAME_FUZZY_MAX_TOKENS: int = 2
 # harness can still sweep it per-request.
 #
 # Env-overridable since phase 2: with enrichment on, k becomes a
-# precision↔canon-recall dial (ADR 0019 measured k=20 at canary +0.157
+# precision↔canon-recall dial (ADR 0020 measured k=20 at canary +0.157
 # / nDCG −0.011 vs k=50 at +0.091 / +0.018 under enriched embeddings),
 # so the serving default can move with the enrichment flags in one
 # config change.
@@ -146,7 +146,7 @@ DEMOTION_FORK: float = 0.8
 # Criticality: sat(dependents) over deps.dev dependent counts
 # (repository_signals, migration 0010) — "how many published packages
 # depend on this" is the authority signal stars can't fake (ADR 0018
-# anticipated it; ADR 0019 wires it). Same saturation form as stars but
+# anticipated it; ADR 0020 wires it). Same saturation form as stars but
 # a FIXED pivot: the candidate-set geometric mean that stars use
 # degenerates here because most candidates have no published package at
 # all (NULL -> the term contributes 0, deliberately distinct from

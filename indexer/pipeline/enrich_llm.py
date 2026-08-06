@@ -14,7 +14,7 @@ Usage:
 
 Generates, per repo: 5-8 synthetic plain-English queries, a one-paragraph
 "what is this for" description, name aliases, and category tags — the
-category vocabulary canonical repos' own metadata lacks (ADR 0019; the
+category vocabulary canonical repos' own metadata lacks (ADR 0020; the
 research plan's highest-leverage single change). Rows land in
 ``repository_enrichment`` under source='llm' with model + prompt_version
 provenance, beside (never merged with) the awesome-mined rows.
@@ -452,7 +452,7 @@ def main() -> None:
     if not args.i_approve_the_cost:
         raise SystemExit(
             "--submit requires --i-approve-the-cost (the estimate above "
-            "must be explicitly approved; see ADR 0019)."
+            "must be explicitly approved; see ADR 0020)."
         )
     if not rows:
         logger.info("Nothing to submit.")

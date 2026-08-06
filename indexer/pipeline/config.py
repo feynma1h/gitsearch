@@ -21,7 +21,7 @@ import os
 # The default names the raw encoder; a label containing "+enrich"
 # (e.g. "BAAI/bge-small-en-v1.5+enrich-v1") means "the same encoder
 # over enrichment-aware documents" — the pipeline then folds
-# repository_enrichment text into each source document (ADR 0019) and
+# repository_enrichment text into each source document (ADR 0020) and
 # records vectors under the versioned label, leaving the originals
 # untouched. Serving flips between labels via the search service's own
 # EMBEDDINGS_MODEL_LABEL; rollback is that config change.

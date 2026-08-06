@@ -147,7 +147,7 @@ build-hnsw: ## (Re)build the HNSW index after bulk embedding. Search stays up bu
 	        USING hnsw (embedding vector_cosine_ops) \
 	        WITH (m = 16, ef_construction = 64);"
 
-# --- Versioned embedding labels (ADR 0019) ---------------------------------
+# --- Versioned embedding labels (ADR 0020) ---------------------------------
 # Enriched vectors live under their own model_name label beside the
 # originals (ADR 0006 keying); serving flips labels via the search
 # service's EMBEDDINGS_MODEL_LABEL env var. The full workflow:

@@ -220,7 +220,7 @@ class WeightsModel(BaseModel):
     stars: float = Field(default=DEFAULT_STARS_WEIGHT, ge=0)
     recency: float = Field(default=DEFAULT_RECENCY_WEIGHT, ge=0)
     # sat(deps.dev dependents); defaults to 0.0 — dark until the eval
-    # promotes it (ADR 0019). Sweepable per-request like the rest.
+    # promotes it (ADR 0020). Sweepable per-request like the rest.
     criticality: float = Field(default=DEFAULT_CRITICALITY_WEIGHT, ge=0)
     half_life_days: float = Field(default=DEFAULT_RECENCY_HALF_LIFE_DAYS, gt=0)
     full_text_weight: float = Field(default=FULL_TEXT_WEIGHT, ge=0)

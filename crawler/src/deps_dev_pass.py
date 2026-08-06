@@ -29,7 +29,7 @@ is NOT comparable across ecosystems — PYPI defaults look sane
 We therefore take the MAX over a sampled set of versions (default +
 newest few + evenly spaced older) per package, store it as a lower
 bound, and the ranking weight that consumes this signal ships at 0.0
-until the eval proves it helps (ADR 0019). If the signal earns its
+until the eval proves it helps (ADR 0020). If the signal earns its
 weight, the upgrade path is OpenSSF criticality_score's published
 dataset, which aggregates deps.dev dependents properly.
 

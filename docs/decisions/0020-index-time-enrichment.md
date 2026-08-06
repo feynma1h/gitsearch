@@ -1,4 +1,4 @@
-# ADR 0019: Index-time enrichment — mined curation, versioned embeddings, and a dark criticality signal
+# ADR 0020: Index-time enrichment — mined curation, versioned embeddings, and a dark criticality signal
 
 **Status:** accepted
 **Date:** 2026-08-06

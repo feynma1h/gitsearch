@@ -6,7 +6,7 @@ and a section heading trail that names the *category* the way a person
 searching would ("Frameworks", "Machine Learning", "Static Site
 Generators"). That is exactly the vocabulary canonical repos' own
 metadata lacks, which is why this parser exists (search v2 phase 2 —
-see ADR 0019 and migration 0009).
+see ADR 0020 and migration 0009).
 
 This module is pure text -> structures, no I/O, mirroring the
 document_builder philosophy: the parsing policy is disproportionately

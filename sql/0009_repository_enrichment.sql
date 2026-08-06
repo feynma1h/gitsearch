@@ -1,5 +1,5 @@
 -- Migration 0009: repository_enrichment — index-time document enrichment
--- (search v2 phase 2; ADR 0019).
+-- (search v2 phase 2; ADR 0020).
 --
 -- Enrichment text (mined awesome-list descriptions, and later LLM
 -- doc2query output) manufactures the category vocabulary canonical

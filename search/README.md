@@ -74,7 +74,7 @@ A request goes through three stages:
    repo first, popularity-independent. Archived repos and forks are
    demoted.
    See [ADR 0018](../docs/decisions/0018-three-lane-hybrid-retrieval.md)
-   and [ADR 0019](../docs/decisions/0019-index-time-enrichment.md).
+   and [ADR 0020](../docs/decisions/0020-index-time-enrichment.md).
 
 ## Setup
 

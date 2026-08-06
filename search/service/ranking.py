@@ -80,7 +80,7 @@ class ScoringWeights:
     tune-ranking sliders keep working unchanged.
 
     ``criticality`` weights sat(deps.dev dependents). It defaults to
-    0.0 — dark until the eval measures a win (ADR 0019); the SQL and
+    0.0 — dark until the eval measures a win (ADR 0020); the SQL and
     the response schema carry it either way so sweeps are pure
     per-request config.
     """
