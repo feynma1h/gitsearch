@@ -28,10 +28,11 @@ Design notes:
     (cosine >= QUERY_MIN_COSINE) — the "--" in Doc2Query--; unfiltered
     expansion measurably hurts (+16% with filtering in the original
     paper).
-  - **Model choice**: default claude-haiku-4-5 — the project's
-    established cheap-LLM tier (guides, ADR 0016), and NOT the eval
-    judge's family (Gemini), preserving ADR 0018's judge-independence
-    rule. Override with --model after checking pricing.
+  - **Model choice**: --provider picks a pinned model per provider;
+    gemini (flash-lite, the approved full-corpus path — ~10x cheaper)
+    is the default, anthropic (haiku) preserves ADR 0018's
+    judge-independence rule without the spot-judge control. See the
+    provider table below and ADR 0020.
   - **Resumable / idempotent**: repos with an ('llm', PROMPT_VERSION,
     model) row are skipped at selection; batch ids are recorded in
     ``pipeline/.llm_batches.json`` so --collect can run any time within
@@ -249,6 +250,29 @@ def _save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=1) + "\n")
 
 
+# The submitter and the collector run as separate long-lived processes
+# sharing STATE_FILE. Each mutation therefore RE-READS the file, applies
+# one small change, and writes back — holding a copy across hours (the
+# original shape) let the submitter clobber the collector's
+# collected=True marks on every new submit, which stalled collection a
+# full night. The remaining race window is milliseconds and the two
+# writers touch disjoint fields (appends vs flag flips), so
+# re-read-modify-write is enough; a lock file would be ceremony.
+
+def _state_append(entry: dict) -> None:
+    state = _load_state()
+    state["batches"].append(entry)
+    _save_state(state)
+
+
+def _state_mark_collected(batch_id: str) -> None:
+    state = _load_state()
+    for entry in state["batches"]:
+        if entry["id"] == batch_id:
+            entry["collected"] = True
+    _save_state(state)
+
+
 async def _select_pending(top_n: int, model: str) -> List[str]:
     """Ids of repos still needing ('llm', PROMPT_VERSION, model) rows,
     stars-descending. Repos already in a submitted-but-uncollected
@@ -282,7 +306,6 @@ async def _build_docs(ids: List[str]) -> Dict[str, str]:
 
 def submit(ids: List[str], docs: Dict[str, str], model: str) -> None:
     client = _anthropic_client()
-    state = _load_state()
 
     for start in range(0, len(ids), BATCH_CHUNK):
         chunk = ids[start:start + BATCH_CHUNK]
@@ -317,7 +340,7 @@ def submit(ids: List[str], docs: Dict[str, str], model: str) -> None:
             })
         batch = client.messages.batches.create(requests=requests)
         logger.info("submitted batch %s (%d requests)", batch.id, len(requests))
-        state["batches"].append({
+        _state_append({
             "provider": "anthropic",
             "id": batch.id,
             "model": model,
@@ -325,7 +348,6 @@ def submit(ids: List[str], docs: Dict[str, str], model: str) -> None:
             "id_map": id_map,
             "collected": False,
         })
-        _save_state(state)
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +509,7 @@ def submit_gemini(ids: List[str], model: str) -> None:
         if not batch_name:
             raise SystemExit(f"unexpected batch-create response: {job}")
         logger.info("submitted %s as %s", display, batch_name)
-        state["batches"].append({
+        _state_append({
             "provider": "gemini",
             "id": batch_name,
             "model": model,
@@ -495,7 +517,6 @@ def submit_gemini(ids: List[str], model: str) -> None:
             "id_map": id_map,
             "collected": False,
         })
-        _save_state(state)
 
         # Drain before the next chunk: the enqueued-tokens quota only
         # frees when this job leaves the queue.
@@ -726,8 +747,7 @@ async def collect(model_hint: Optional[str]) -> None:
                             stats,
                         )
 
-                entry["collected"] = True
-                _save_state(state)
+                _state_mark_collected(entry["id"])
                 logger.info(
                     "batch %s collected: %d rows written so far "
                     "(%d queries dropped by the consistency filter)",
