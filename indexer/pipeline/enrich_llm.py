@@ -80,10 +80,17 @@ PROVIDER_MODELS = {
 DEFAULT_PROVIDER = "gemini"
 
 _GEMINI_BASE = "https://generativelanguage.googleapis.com"
-# Requests per Gemini batch job: the whole corpus fits one 2GB file,
-# but chunking bounds retry blast-radius and lets collection start on
-# early chunks while later ones still run.
-GEMINI_BATCH_CHUNK = 50_000
+# Requests per Gemini batch job. The binding constraint is the Batch
+# API's ENQUEUED-TOKENS quota — 10M tokens for flash-lite on Tier 1
+# (measured: 21K-request jobs 429 with RESOURCE_EXHAUSTED, 1K jobs
+# create fine; docs confirm the 10M figure). At ~1,050 input tokens
+# per request, 8K requests ≈ 8.4M enqueued leaves headroom, and jobs
+# must DRAIN sequentially — the quota counts queued+running jobs, so
+# submit_gemini waits for each job to finish before submitting the
+# next. Tier 2 (500M) would take the whole corpus at once; it unlocks
+# at $100 cumulative spend, which this project hasn't reached.
+GEMINI_BATCH_CHUNK = 8_000
+GEMINI_DRAIN_POLL_SECONDS = 120
 
 # Doc2Query-- consistency gate: a generated query must actually retrieve
 # its own document. bge-small cosine between query and source doc;
@@ -244,11 +251,21 @@ def _save_state(state: dict) -> None:
 
 async def _select_pending(top_n: int, model: str) -> List[str]:
     """Ids of repos still needing ('llm', PROMPT_VERSION, model) rows,
-    stars-descending."""
+    stars-descending. Repos already in a submitted-but-uncollected
+    batch are excluded too — their rows don't exist yet, and without
+    this a resubmit would pay to generate them twice."""
+    in_flight = set()
+    for entry in _load_state()["batches"]:
+        if not entry["collected"]:
+            in_flight.update(entry["id_map"].values())
     pool = await create_pool()
     try:
         rows = await pool.fetch(_SELECT_SQL, PROMPT_VERSION, model, top_n)
-        return [row["id"] for row in rows]
+        ids = [row["id"] for row in rows if row["id"] not in in_flight]
+        if in_flight:
+            logger.info("excluding %d repos already in flight in "
+                        "uncollected batches", len(in_flight))
+        return ids
     finally:
         await pool.close()
 
@@ -362,12 +379,19 @@ def _with_gemini_retries(what: str, fn):
         try:
             return fn()
         except urllib.error.HTTPError as exc:
+            try:
+                body = " ".join(
+                    exc.read().decode("utf-8", errors="replace").split()
+                )[:600]
+            except Exception:  # noqa: BLE001
+                body = "<unreadable>"
             if exc.code not in (429, 500, 502, 503, 504) or attempt == 5:
+                logger.error("%s: HTTP %s: %s", what, exc.code, body)
                 raise
             retry_after = exc.headers.get("Retry-After")
             wait = float(retry_after) if retry_after else delay
-            logger.info("%s: HTTP %s — retrying in %.0fs (attempt %d/5)",
-                        what, exc.code, wait, attempt + 1)
+            logger.info("%s: HTTP %s — retrying in %.0fs (attempt %d/5): %s",
+                        what, exc.code, wait, attempt + 1, body)
             time.sleep(wait)
             delay = min(delay * 2, 600)
 
@@ -427,13 +451,19 @@ def _gemini_request_line(key: str, doc: str) -> dict:
     }
 
 
-def submit_gemini(ids: List[str], docs: Dict[str, str], model: str) -> None:
+def submit_gemini(ids: List[str], model: str) -> None:
+    """Sequential drain-submit: one chunk in the queue at a time (the
+    enqueued-tokens quota), documents fetched per chunk so a day-long
+    run holds megabytes, not the corpus."""
     state = _load_state()
     for start in range(0, len(ids), GEMINI_BATCH_CHUNK):
         chunk = ids[start:start + GEMINI_BATCH_CHUNK]
+        docs = asyncio.run(_build_docs(chunk))
         id_map: Dict[str, str] = {}
         lines = []
         for i, repo_id in enumerate(chunk):
+            if repo_id not in docs:
+                continue
             key = f"r{start + i}"
             id_map[key] = repo_id
             lines.append(json.dumps(
@@ -466,6 +496,18 @@ def submit_gemini(ids: List[str], docs: Dict[str, str], model: str) -> None:
             "collected": False,
         })
         _save_state(state)
+
+        # Drain before the next chunk: the enqueued-tokens quota only
+        # frees when this job leaves the queue.
+        while True:
+            job_state, _ = _gemini_batch_status(batch_name)
+            if (job_state or "").endswith(
+                    ("_SUCCEEDED", "_FAILED", "_EXPIRED", "_CANCELLED")):
+                logger.info("%s finished: %s", batch_name, job_state)
+                break
+            logger.info("%s: %s — waiting %ds",
+                        batch_name, job_state, GEMINI_DRAIN_POLL_SECONDS)
+            time.sleep(GEMINI_DRAIN_POLL_SECONDS)
 
 
 def _gemini_batch_status(batch_name: str) -> tuple:
@@ -750,16 +792,16 @@ def main() -> None:
     if not ids:
         logger.info("Nothing to submit.")
         return
-    logger.info("Fetching %d generation documents (chunked)...", len(ids))
-    docs = asyncio.run(_build_docs(ids))
-    missing = [i for i in ids if i not in docs]
-    if missing:
-        logger.warning("%d ids had no fetchable document; skipping them.",
-                       len(missing))
-        ids = [i for i in ids if i in docs]
     if args.provider == "gemini":
-        submit_gemini(ids, docs, model)
+        submit_gemini(ids, model)
     else:
+        logger.info("Fetching %d generation documents (chunked)...", len(ids))
+        docs = asyncio.run(_build_docs(ids))
+        missing = [i for i in ids if i not in docs]
+        if missing:
+            logger.warning("%d ids had no fetchable document; skipping.",
+                           len(missing))
+            ids = [i for i in ids if i in docs]
         submit(ids, docs, model)
 
 
