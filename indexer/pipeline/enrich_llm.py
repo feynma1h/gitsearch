@@ -351,34 +351,60 @@ def _gemini_json(method: str, url: str, payload: Optional[dict] = None,
         return json.loads(resp.read())
 
 
+def _with_gemini_retries(what: str, fn):
+    """Run ``fn`` with backoff on 429/5xx (Retry-After honoured). The
+    File API rate-limits bursts even well under its storage quota —
+    measured on the first full-corpus submit."""
+    import urllib.error
+    delay = 30.0
+    for attempt in range(6):
+        try:
+            return fn()
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (429, 500, 502, 503, 504) or attempt == 5:
+                raise
+            retry_after = exc.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after else delay
+            logger.info("%s: HTTP %s — retrying in %.0fs (attempt %d/5)",
+                        what, exc.code, wait, attempt + 1)
+            time.sleep(wait)
+            delay = min(delay * 2, 600)
+
+
 def _gemini_upload_jsonl(blob: bytes, display_name: str) -> str:
-    """Resumable File API upload; returns the file resource name."""
+    """Resumable File API upload; returns the file resource name.
+    Each attempt restarts the two-step upload from scratch — a stale
+    resumable session is not worth resuming for one-shot batch files."""
     import urllib.request
-    start = urllib.request.Request(
-        f"{_GEMINI_BASE}/upload/v1beta/files",
-        method="POST",
-        data=json.dumps({"file": {"display_name": display_name}}).encode(),
-        headers={
-            "x-goog-api-key": _gemini_key(),
-            "Content-Type": "application/json",
-            "X-Goog-Upload-Protocol": "resumable",
-            "X-Goog-Upload-Command": "start",
-            "X-Goog-Upload-Header-Content-Length": str(len(blob)),
-            "X-Goog-Upload-Header-Content-Type": "application/jsonl",
-        },
-    )
-    with urllib.request.urlopen(start, timeout=120) as resp:
-        upload_url = resp.headers["x-goog-upload-url"]
-    finish = urllib.request.Request(
-        upload_url, method="POST", data=blob,
-        headers={
-            "X-Goog-Upload-Command": "upload, finalize",
-            "X-Goog-Upload-Offset": "0",
-            "Content-Length": str(len(blob)),
-        },
-    )
-    with urllib.request.urlopen(finish, timeout=1800) as resp:
-        return json.loads(resp.read())["file"]["name"]
+
+    def _do() -> str:
+        start = urllib.request.Request(
+            f"{_GEMINI_BASE}/upload/v1beta/files",
+            method="POST",
+            data=json.dumps({"file": {"display_name": display_name}}).encode(),
+            headers={
+                "x-goog-api-key": _gemini_key(),
+                "Content-Type": "application/json",
+                "X-Goog-Upload-Protocol": "resumable",
+                "X-Goog-Upload-Command": "start",
+                "X-Goog-Upload-Header-Content-Length": str(len(blob)),
+                "X-Goog-Upload-Header-Content-Type": "application/jsonl",
+            },
+        )
+        with urllib.request.urlopen(start, timeout=120) as resp:
+            upload_url = resp.headers["x-goog-upload-url"]
+        finish = urllib.request.Request(
+            upload_url, method="POST", data=blob,
+            headers={
+                "X-Goog-Upload-Command": "upload, finalize",
+                "X-Goog-Upload-Offset": "0",
+                "Content-Length": str(len(blob)),
+            },
+        )
+        with urllib.request.urlopen(finish, timeout=1800) as resp:
+            return json.loads(resp.read())["file"]["name"]
+
+    return _with_gemini_retries(f"upload {display_name}", _do)
 
 
 def _gemini_request_line(key: str, doc: str) -> dict:
@@ -418,12 +444,14 @@ def submit_gemini(ids: List[str], docs: Dict[str, str], model: str) -> None:
         logger.info("uploading %s (%.1f MB, %d requests)...",
                     display, len(blob) / 1e6, len(chunk))
         file_name = _gemini_upload_jsonl(blob, display)
-        job = _gemini_json(
+        job = _with_gemini_retries(f"create job {display}", lambda: _gemini_json(
             "POST",
             f"{_GEMINI_BASE}/v1beta/models/{model}:batchGenerateContent",
             {"batch": {"display_name": display,
                        "input_config": {"file_name": file_name}}},
-        )
+        ))
+        # Pace chunk submissions — the File API rate-limits bursts.
+        time.sleep(20)
         batch_name = job.get("name") or job.get("batch", {}).get("name")
         if not batch_name:
             raise SystemExit(f"unexpected batch-create response: {job}")
