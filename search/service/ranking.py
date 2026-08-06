@@ -33,13 +33,16 @@ any change to the formula touches both files; the tests in
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence
 
 from .config import (
+    DEFAULT_CRITICALITY_WEIGHT,
     DEMOTION_ARCHIVED,
     DEMOTION_FORK,
+    DEPENDENTS_PIVOT,
     FULL_TEXT_WEIGHT,
     NAME_WEIGHT,
     RECENCY_FLOOR,
@@ -75,10 +78,16 @@ class ScoringWeights:
     ``similarity`` weights the fused *relevance* signal — the name is
     the API's historical vocabulary, kept so existing clients and the
     tune-ranking sliders keep working unchanged.
+
+    ``criticality`` weights sat(deps.dev dependents). It defaults to
+    0.0 — dark until the eval measures a win (ADR 0019); the SQL and
+    the response schema carry it either way so sweeps are pure
+    per-request config.
     """
     similarity: float = DEFAULT_SIMILARITY_WEIGHT
     stars: float = DEFAULT_STARS_WEIGHT
     recency: float = DEFAULT_RECENCY_WEIGHT
+    criticality: float = DEFAULT_CRITICALITY_WEIGHT
     half_life_days: float = DEFAULT_RECENCY_HALF_LIFE_DAYS
 
 
@@ -150,6 +159,22 @@ def saturate_stars(stars: int, pivot: float) -> float:
     return stars / (stars + pivot)
 
 
+def saturate_dependents(
+    dependent_count: Optional[int], pivot: float = DEPENDENTS_PIVOT
+) -> float:
+    """sat(dependents) with a fixed pivot (config: DEPENDENTS_PIVOT).
+
+    Fixed rather than per-candidate-set because most candidates have no
+    published package at all — a geometric mean over a mostly-empty
+    signal is noise, not a yardstick. None (no package known) and 0
+    (package nobody depends on) both score 0.0; the distinction is
+    provenance, not rank.
+    """
+    if dependent_count is None or dependent_count <= 0:
+        return 0.0
+    return dependent_count / (dependent_count + pivot)
+
+
 def normalise_recency(
     pushed_at: Optional[datetime],
     *,
@@ -196,11 +221,37 @@ def demotion_factor(*, is_archived: bool, is_fork: bool) -> float:
     return 1.0
 
 
+_NAME_PUNCT_RE = re.compile(r"[-._]")
+
+
+def normalise_name(text: str) -> str:
+    """Punctuation-normalised name form: lowercase, [-._] removed —
+    "Next.js", "next-js", and "nextjs" all become "nextjs". Mirrors the
+    SQL ``translate(lower(x), '-._', '')`` (indexes in migration 0009)
+    exactly; both sides must keep the same character set."""
+    return _NAME_PUNCT_RE.sub("", text.strip().lower())
+
+
 def is_exact_name(query: str, *, full_name: str, name: str) -> bool:
     """crates.io's rule: the query IS this repo's name. Case-insensitive
-    on either the bare name ("pytorch") or owner/name ("pytorch/pytorch")."""
+    on either the bare name ("pytorch") or owner/name ("pytorch/pytorch").
+
+    Phase 2 extends the match to the punctuation-normalised forms, so
+    "nextjs" pins vercel/next.js into the exact tier alongside any repo
+    literally named "nextjs" — inside that tier, score-then-stars
+    ordering puts the canonical repo first (the ADR 0018 name-squatter
+    landmine). Normalisation never *removes* a match: the plain
+    comparison is a subset of the normalised one.
+    """
     q = query.strip().lower()
-    return bool(q) and (full_name.lower() == q or name.lower() == q)
+    if not q:
+        return False
+    if full_name.lower() == q or name.lower() == q:
+        return True
+    nq = normalise_name(query)
+    return bool(nq) and (
+        normalise_name(full_name) == nq or normalise_name(name) == nq
+    )
 
 
 def hybrid_score(
@@ -211,6 +262,7 @@ def hybrid_score(
     stars: int,
     pivot: float,
     pushed_at: Optional[datetime],
+    dependent_count: Optional[int] = None,
     is_archived: bool = False,
     is_fork: bool = False,
     weights: ScoringWeights = ScoringWeights(),
@@ -225,8 +277,10 @@ def hybrid_score(
     recency_norm = normalise_recency(
         pushed_at, now=now, half_life_days=weights.half_life_days
     )
+    crit_sat = saturate_dependents(dependent_count)
     return demotion_factor(is_archived=is_archived, is_fork=is_fork) * (
         weights.similarity * rel_norm
         + weights.stars * stars_sat
         + weights.recency * recency_norm
+        + weights.criticality * crit_sat
     )

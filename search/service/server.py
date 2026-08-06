@@ -63,6 +63,7 @@ from .config import (
     RRF_K,
     SEMANTIC_WEIGHT,
 )
+from .config import DEFAULT_CRITICALITY_WEIGHT, PHASE2_RETRIEVAL
 from .ranking import (
     DEFAULT_RECENCY_HALF_LIFE_DAYS,
     DEFAULT_SIMILARITY_WEIGHT,
@@ -134,8 +135,10 @@ async def lifespan(_: FastAPI):
     if _anthropic:
         guides_mode = "full-repo" if _github_token else "readme-only"
     logger.info(
-        "Search service ready; model=%s, embedding service=%s, guides=%s",
+        "Search service ready; model=%s, embedding service=%s, guides=%s, "
+        "phase2_retrieval=%s",
         MODEL_NAME, service_url, guides_mode,
+        "on" if PHASE2_RETRIEVAL else "off",
     )
 
     yield
@@ -216,6 +219,9 @@ class WeightsModel(BaseModel):
     similarity: float = Field(default=DEFAULT_SIMILARITY_WEIGHT, ge=0)
     stars: float = Field(default=DEFAULT_STARS_WEIGHT, ge=0)
     recency: float = Field(default=DEFAULT_RECENCY_WEIGHT, ge=0)
+    # sat(deps.dev dependents); defaults to 0.0 — dark until the eval
+    # promotes it (ADR 0019). Sweepable per-request like the rest.
+    criticality: float = Field(default=DEFAULT_CRITICALITY_WEIGHT, ge=0)
     half_life_days: float = Field(default=DEFAULT_RECENCY_HALF_LIFE_DAYS, gt=0)
     full_text_weight: float = Field(default=FULL_TEXT_WEIGHT, ge=0)
     semantic_weight: float = Field(default=SEMANTIC_WEIGHT, ge=0)
@@ -245,12 +251,14 @@ class HitModel(BaseModel):
     exact_name: bool
     hybrid_score: float
     # Per-component contributions to hybrid_score (already weight-multiplied):
-    # fused relevance, saturated stars, recency. Their sum equals
-    # hybrid_score. Exposed so the UI can show why a result ranked where
-    # it did. See ADR 0018.
+    # fused relevance, saturated stars, recency, criticality
+    # (sat(dependents); 0.0 while its weight ships dark). Their sum
+    # equals hybrid_score. Exposed so the UI can show why a result
+    # ranked where it did. See ADRs 0018/0019.
     similarity_contribution: float
     stars_contribution: float
     recency_contribution: float
+    criticality_contribution: float
 
 
 class SearchResponse(BaseModel):
@@ -305,6 +313,7 @@ async def do_search(request: Request, req: SearchRequest) -> SearchResponse:
         similarity=req.weights.similarity,
         stars=req.weights.stars,
         recency=req.weights.recency,
+        criticality=req.weights.criticality,
         half_life_days=req.weights.half_life_days,
     )
     lanes = LaneWeights(
@@ -348,6 +357,7 @@ def _hit_to_model(hit: SearchHit) -> HitModel:
         similarity_contribution=hit.similarity_contribution,
         stars_contribution=hit.stars_contribution,
         recency_contribution=hit.recency_contribution,
+        criticality_contribution=hit.criticality_contribution,
     )
 
 

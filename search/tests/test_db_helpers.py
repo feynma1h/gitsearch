@@ -1,16 +1,21 @@
 """Tests for the pure helper functions in service/db.py — the pieces
 of the retrieval SQL's input preparation that Python owns: coverage
-slot construction, the fuzzy-arm gate, and LIKE-pattern escaping.
+slot construction, the fuzzy-arm gate, LIKE-pattern escaping, and the
+two-variant SQL builder (ADR 0019).
 """
 
 from __future__ import annotations
 
+import re
+
 from service.config import FTS_COVERAGE_SLOTS, NAME_FUZZY_MAX_TOKENS
 from service.db import (
+    _build_search_sql,
     coverage_slots,
     fuzzy_name_query,
     like_prefix_pattern,
     name_query,
+    normalized_name_query,
 )
 
 
@@ -60,3 +65,40 @@ def test_like_prefix_pattern_escapes_metacharacters() -> None:
 
 def test_name_query_normalises() -> None:
     assert name_query("  PyTorch ") == "pytorch"
+
+
+def test_normalized_name_query_strips_punctuation_only_for_names() -> None:
+    assert normalized_name_query("Next.js") == "nextjs"
+    assert normalized_name_query("scikit-learn") == "scikitlearn"
+    assert normalized_name_query("vercel/next.js") == "vercel/nextjs"
+    # Multi-word queries and empty/punctuation-only queries disable the
+    # arm with None (NULL never compares true) rather than "".
+    assert normalized_name_query("machine learning framework") is None
+    assert normalized_name_query("...") is None
+    assert normalized_name_query("  ") is None
+
+
+def _param_numbers(sql: str) -> set[int]:
+    return {int(n) for n in re.findall(r"\$(\d+)", sql)}
+
+
+def test_both_sql_variants_bind_the_same_34_parameters() -> None:
+    # search() always sends 34 arguments; a prepared statement infers
+    # its parameter list from the query text, so BOTH variants must
+    # reference every slot ($32/$33 via the phase-1 params anchor).
+    expected = set(range(1, 35))
+    assert _param_numbers(_build_search_sql(True)) == expected
+    assert _param_numbers(_build_search_sql(False)) == expected
+
+
+def test_phase_flag_controls_enrichment_references() -> None:
+    on, off = _build_search_sql(True), _build_search_sql(False)
+    for table in ("repository_enrichment", "repository_signals"):
+        assert table in on
+        assert table not in off
+    assert "translate(lower(" in on
+    assert "translate(lower(" not in off
+    # Phase 1 keeps the response shape: criticality still computed,
+    # from a constant-NULL dependent count.
+    assert "criticality_contribution" in off
+    assert "NULL::int AS dependent_count" in off

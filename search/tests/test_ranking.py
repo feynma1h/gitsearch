@@ -31,8 +31,10 @@ from service.ranking import (
     hybrid_score,
     is_exact_name,
     minmax_norm,
+    normalise_name,
     normalise_recency,
     rrf_score,
+    saturate_dependents,
     saturate_stars,
     stars_pivot,
 )
@@ -196,7 +198,14 @@ def test_recency_custom_half_life():
 def test_exact_name_matches_bare_name_and_full_name():
     assert is_exact_name("pytorch", full_name="pytorch/pytorch", name="pytorch")
     assert is_exact_name("Helm/Helm", full_name="helm/helm", name="helm")
+    # Punctuation-normalised matches (ADR 0019): typing "nextjs" IS
+    # typing next.js's name.
+    assert is_exact_name("nextjs", full_name="vercel/next.js", name="next.js")
+    assert is_exact_name("scikitlearn",
+                         full_name="scikit-learn/scikit-learn",
+                         name="scikit-learn")
     assert not is_exact_name("torch", full_name="pytorch/pytorch", name="pytorch")
+    assert not is_exact_name("next js", full_name="vercel/next.js", name="next.js")
     assert not is_exact_name("machine learning framework",
                              full_name="pytorch/pytorch", name="pytorch")
     assert not is_exact_name("   ", full_name="a/b", name="b")
@@ -208,6 +217,49 @@ def test_demotion_factors():
     assert demotion_factor(is_archived=True, is_fork=False) == DEMOTION_ARCHIVED
     # Archived-and-fork is mostly archive.
     assert demotion_factor(is_archived=True, is_fork=True) == DEMOTION_ARCHIVED
+
+
+# ---------------------------------------------------------------------------
+# Criticality (sat(dependents), ADR 0019)
+# ---------------------------------------------------------------------------
+
+def test_saturate_dependents_none_and_zero_score_zero():
+    assert saturate_dependents(None) == 0.0
+    assert saturate_dependents(0) == 0.0
+
+
+def test_saturate_dependents_is_half_at_pivot_and_bounded():
+    assert math.isclose(saturate_dependents(1000, pivot=1000.0), 0.5)
+    assert saturate_dependents(10_000_000, pivot=1000.0) < 1.0
+
+
+def test_criticality_weight_defaults_dark():
+    # The shipped default must add exactly nothing until the eval says
+    # otherwise — this is what makes deploying the term a non-event.
+    assert ScoringWeights().criticality == 0.0
+    base = dict(rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+                stars=1000, pivot=1000.0, pushed_at=None)
+    assert hybrid_score(**base) == hybrid_score(**base, dependent_count=50_000)
+
+
+def test_criticality_separates_depended_on_repos_when_enabled():
+    weights = ScoringWeights(criticality=0.3)
+    base = dict(rrf=0.02, rrf_min=0.01, rrf_max=0.03,
+                stars=1000, pivot=1000.0, pushed_at=None, weights=weights)
+    library = hybrid_score(**base, dependent_count=50_000)
+    app = hybrid_score(**base, dependent_count=None)
+    assert library > app
+    assert library - app <= 0.3  # bounded boost, never a takeover
+
+
+def test_normalise_name_strips_exactly_the_sql_charset():
+    # Mirrors SQL translate(lower(x), '-._', '') — spaces are NOT
+    # stripped; drift between the two sides would desync exact-name
+    # behaviour from the indexes in migration 0009.
+    assert normalise_name(" Next.js ") == "nextjs"
+    assert normalise_name("scikit-learn") == "scikitlearn"
+    assert normalise_name("a_b-c.d") == "abcd"
+    assert normalise_name("next js") == "next js"
 
 
 # ---------------------------------------------------------------------------

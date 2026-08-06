@@ -11,19 +11,46 @@ See ./docs/decisions/ for the rationale behind each value.
 
 from __future__ import annotations
 
+import os
+
 # ---------------------------------------------------------------------------
 # Embedding model — must match what the embedding service is serving.
 # ---------------------------------------------------------------------------
 
-# This needs to stay in lockstep with ``indexer/pipeline/config.MODEL_NAME``
-# and the ``EMBEDDING_MODEL`` env var on the embedding service. The search
-# API embeds the user query at request time and joins against the
-# ``repository_embeddings`` table where ``model_name = MODEL_NAME``; if
-# they don't match, you get zero results.
-MODEL_NAME: str = "BAAI/bge-small-en-v1.5"
+# The *storage label* this service serves dense retrieval from: the
+# ``model_name`` key in ``repository_embeddings`` (ADR 0006 keys rows by
+# (repo_id, model_name) precisely so labels can sit side by side). The
+# label names the encoder PLUS the document construction — phase 2
+# stores enrichment-aware vectors under
+# "BAAI/bge-small-en-v1.5+enrich-v1" beside the originals, and serving
+# flips between them with the EMBEDDINGS_MODEL_LABEL env var. Rollback
+# is the same env var pointed back; no recompute, no redeploy of code.
+#
+# The query-side encoder does NOT change with the label: the embedding
+# service always runs bge-small (its own EMBEDDING_MODEL env), and every
+# "+enrich-vN" label must be produced by that same encoder over an
+# enriched document, or query and document vectors stop sharing a space.
+MODEL_NAME: str = os.getenv("EMBEDDINGS_MODEL_LABEL", "BAAI/bge-small-en-v1.5")
 
 # Vector dimension; baked into the SQL schema (vector(384)). See ADR 0007.
 EMBEDDING_DIM: int = 384
+
+# ---------------------------------------------------------------------------
+# Phase-2 retrieval (enrichment lane + name normalisation; ADR 0019)
+# ---------------------------------------------------------------------------
+
+# Master switch for the phase-2 retrieval additions: the enrichment
+# arm of the FTS lane (repository_enrichment), the punctuation-
+# normalised exact-name rule, and the criticality term's join
+# (repository_signals). "off" serves the exact phase-1 statement —
+# that's the rollback lever if the phase-2 tables are ever dropped
+# (their absence with the flag on would error every query), and the
+# verification lever for no-behavior-change infra deploys. With the
+# flag ON and the tables merely *empty*, behaviour is still exactly
+# phase-1, repo by repo — absence of enrichment degrades to today.
+PHASE2_RETRIEVAL: bool = os.getenv(
+    "PHASE2_RETRIEVAL", "on"
+).strip().lower() not in ("off", "0", "false", "no")
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +130,21 @@ RECENCY_FLOOR: float = 0.25
 # shouldn't outrank their upstream.
 DEMOTION_ARCHIVED: float = 0.5
 DEMOTION_FORK: float = 0.8
+
+# Criticality: sat(dependents) over deps.dev dependent counts
+# (repository_signals, migration 0010) — "how many published packages
+# depend on this" is the authority signal stars can't fake (ADR 0018
+# anticipated it; ADR 0019 wires it). Same saturation form as stars but
+# a FIXED pivot: the candidate-set geometric mean that stars use
+# degenerates here because most candidates have no published package at
+# all (NULL -> the term contributes 0, deliberately distinct from
+# "published but unused" = 0 dependents, which also scores 0).
+#
+# The default weight is 0.0 — the term ships dark. The eval sweeps it
+# per-request (weights.criticality); the default only moves after a
+# measured win, so deploying this code changes nothing by itself.
+DEFAULT_CRITICALITY_WEIGHT: float = 0.0
+DEPENDENTS_PIVOT: float = 1_000.0
 
 
 # ---------------------------------------------------------------------------

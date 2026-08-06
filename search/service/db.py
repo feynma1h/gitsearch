@@ -3,26 +3,34 @@
 A single entry point: given a query (text + vector) + filters + weights,
 return the top-N repos ranked by the hybrid blend.
 
-Retrieval is three lanes in one SQL statement (ADR 0018):
+Retrieval is three lanes in one SQL statement (ADR 0018; enrichment
+arms added by ADR 0019 behind config.PHASE2_RETRIEVAL):
 
   1. Full-text — matches any content lexeme in the README-free light
      fields (``search_tsv_light``: name, topics, language, description)
      or the full websearch query anywhere including the README
-     (``search_tsv``). Ordered by (term coverage, stars): how many
-     distinct query terms the light fields cover, then popularity
-     within each coverage tier — so for "machine learning framework
-     python" the canonical repos covering 3-4 terms via topics beat
-     low-star repos with the query stuffed into their name or README.
+     (``search_tsv``), or — phase 2 — the repo's enrichment rows
+     (``repository_enrichment``: mined/generated aliases, categories,
+     descriptions, synthetic queries). Ordered by (term coverage,
+     stars): how many distinct query terms the light fields *or the
+     enrichment* cover, then popularity within each coverage tier — so
+     for "machine learning framework python" pytorch's mined
+     "Frameworks" category completes the 4-term tier its own fields
+     can't reach.
   2. Dense — pgvector KNN over the halfvec expression index (inner
      product; embeddings are L2-normalised so the ordering equals
-     cosine). pgvector 0.8 iterative scans keep filtered searches from
-     coming back short.
+     cosine), against the configured storage label
+     (config.MODEL_NAME / EMBEDDINGS_MODEL_LABEL — enriched vectors
+     live under their own label per ADR 0006). pgvector 0.8 iterative
+     scans keep filtered searches from coming back short.
   3. Name — pg_trgm exact / prefix / fuzzy on the repo name, so typos
      ("pytorhc") and half-remembered names still land (the fuzzy arm
-     only fires for short queries; typos are short).
+     only fires for short queries; typos are short). Phase 2 adds the
+     punctuation-normalised exact arm ("nextjs" == "next.js").
 
 The lanes are fused with weighted Reciprocal Rank Fusion, then the
-final ordering applies the additive blend + exact-name-first rule.
+final ordering applies the additive blend (+ criticality term, dark by
+default) and the exact-name-first rule.
 
 The scoring math here intentionally mirrors ``ranking.py`` term by
 term. The Python module is the source of truth for what the formula
@@ -55,6 +63,7 @@ from .config import (
     DEMOTION_ARCHIVED,
     DEMOTION_FORK,
     DENSE_LANE_LIMIT,
+    DEPENDENTS_PIVOT,
     EMBEDDING_DIM,
     FTS_COVERAGE_SLOTS,
     FTS_LANE_LIMIT,
@@ -62,12 +71,13 @@ from .config import (
     MODEL_NAME,
     NAME_FUZZY_MAX_TOKENS,
     NAME_LANE_LIMIT,
+    PHASE2_RETRIEVAL,
     RECENCY_FLOOR,
     STARS_PIVOT_MAX,
     STARS_PIVOT_MIN,
     TRGM_SIMILARITY_THRESHOLD,
 )
-from .ranking import LaneWeights, ScoringWeights
+from .ranking import LaneWeights, ScoringWeights, normalise_name
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +125,7 @@ class SearchHit:
     similarity_contribution: float
     stars_contribution: float
     recency_contribution: float
+    criticality_contribution: float
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +170,13 @@ async def create_pool() -> asyncpg.Pool:
 #              to its content words). One blind spot: a websearch-
 #              negated term appears as a positive lexeme here, so
 #              negation queries rank, rather than filter, this tier.
+#   q_any    — the OR of every content lexeme singly. The enrichment
+#              arm probes with this (one GIN probe on the enrichment
+#              table) because enrichment must contribute to *coverage*
+#              even when it carries only one of the query's terms —
+#              pytorch's mined "Frameworks" category is one term of
+#              "machine learning framework python", and that one term
+#              is the whole point (ADR 0019).
 #   lexemes  — the first 8 content lexemes; Python binds each into its
 #              own slot so the lane can count per-row term coverage
 #              with plain @@ tests (no per-row parsing or ranking
@@ -180,14 +198,17 @@ SELECT websearch_to_tsquery('english', $1)::text AS q_and,
            ELSE
                (SELECT string_agg('''' || lexeme || '''', ' | ') FROM lex)
        END, '') AS q_or,
+       COALESCE(
+           (SELECT string_agg('''' || lexeme || '''', ' | ') FROM lex),
+           '') AS q_any,
        (SELECT COALESCE(array_agg(lexeme ORDER BY ord), '{}')
         FROM lex) AS lexemes
 """
 
 # Stage 2: the lanes, the fusion, and the blend.
 #
-# Parameter slots:
-#   $1  query vector (pgvector text format)         $2  model_name
+# Parameter slots (identical in both variants — see _build_search_sql):
+#   $1  query vector (pgvector text format)         $2  model label
 #   $3  fts lane limit    $4 dense lane limit       $5  name lane limit
 #   $6  AND tsquery (normalised text -> tsquery)    $7  OR tsquery
 #   $8  lowercased query for name matching          $9  LIKE prefix pattern
@@ -198,36 +219,29 @@ SELECT websearch_to_tsquery('english', $1)::text AS q_and,
 #   $22 final LIMIT
 #   $23-$30 coverage slots (single-lexeme tsqueries, '' = unused)
 #   $31 fuzzy name query ('' disables the trigram arm)
+#   $32 any-single-lexeme OR tsquery (enrichment probe)
+#   $33 punctuation-normalised name query | NULL
+#   $34 w_criticality
 #
 # Constants baked in via .format (config values, not per-request):
-# embedding dim, stars pivot clamp, recency floor, demotion factors.
-_SEARCH_SQL = """
-WITH fts_hits AS (
+# embedding dim, stars pivot clamp, recency floor, demotion factors,
+# dependents pivot, and the dense lane's model label — a literal, not
+# $2, so the per-label partial HNSW index (whose predicate the planner
+# must match at plan time) is usable; $2 still serves the display-
+# similarity join, which is a plain PK lookup.
+_SEARCH_SQL_TEMPLATE = """
+WITH {leading_ctes}fts_hits AS (
     -- Membership: any content lexeme in the light fields (name/topics/
     -- language/description) OR the full websearch query anywhere
     -- including the README (one bitmap-OR over two GIN probes; no
-    -- weight labels, so no recheck detoasting).
+    -- weight labels, so no recheck detoasting){membership_doc}.
     -- Ordering: (term coverage, stars) — how many distinct query terms
-    -- the light fields cover, then popularity within each tier. The
-    -- coverage slots are pre-bound single-lexeme tsqueries (empty
-    -- slots match nothing), so the per-row work is a few tsvector
-    -- lookups on an inline column.
+    -- the light fields{coverage_doc} cover, then popularity within
+    -- each tier. The coverage slots are pre-bound single-lexeme
+    -- tsqueries (empty slots match nothing), so the per-row work is a
+    -- few tsvector lookups on inline columns.
     SELECT repo_id, coverage, stars FROM (
-        SELECT r.id AS repo_id, r.stars,
-               (r.search_tsv_light @@ $23)::int
-             + (r.search_tsv_light @@ $24)::int
-             + (r.search_tsv_light @@ $25)::int
-             + (r.search_tsv_light @@ $26)::int
-             + (r.search_tsv_light @@ $27)::int
-             + (r.search_tsv_light @@ $28)::int
-             + (r.search_tsv_light @@ $29)::int
-             + (r.search_tsv_light @@ $30)::int AS coverage
-        FROM repositories r
-        WHERE (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
-          AND ($10::text   IS NULL OR r.primary_language = $10)
-          AND ($11::text[] IS NULL OR r.topics && $11::text[])
-          AND ($12::int    IS NULL OR r.stars >= $12)
-          AND ($13::bool = FALSE OR r.is_archived = FALSE)
+{fts_inner}
         ORDER BY 3 DESC, 2 DESC
         LIMIT $3::int
     ) t
@@ -239,7 +253,7 @@ dense_hits AS (
            (e.embedding::halfvec({dim})) <#> ($1::halfvec({dim})) AS dist
     FROM repository_embeddings e
     JOIN repositories r ON r.id = e.repo_id
-    WHERE e.model_name = $2
+    WHERE e.model_name = '{model_label}'
       AND ($10::text   IS NULL OR r.primary_language = $10)
       AND ($11::text[] IS NULL OR r.topics && $11::text[])
       AND ($12::int    IS NULL OR r.stars >= $12)
@@ -252,13 +266,14 @@ name_hits AS (
         SELECT r.id AS repo_id, r.stars,
                GREATEST(
                    CASE WHEN lower(r.full_name) = $8
-                          OR lower(r.name) = $8 THEN 1.0 ELSE 0.0 END,
+                          OR lower(r.name) = $8{name_norm_score_arm}
+                        THEN 1.0 ELSE 0.0 END,
                    CASE WHEN lower(r.name) LIKE $9 THEN 0.7 ELSE 0.0 END,
                    similarity(r.name, $8)::float8
                ) AS score
         FROM repositories r
         WHERE (lower(r.full_name) = $8
-               OR lower(r.name) LIKE $9
+               OR lower(r.name) LIKE $9{name_norm_where_arm}
                OR r.name % $31)
           AND ($10::text   IS NULL OR r.primary_language = $10)
           AND ($11::text[] IS NULL OR r.topics && $11::text[])
@@ -302,22 +317,28 @@ enriched AS (
            r.full_name, r.name, r.description, r.url,
            r.primary_language, r.topics, r.stars, r.pushed_at,
            r.is_archived, r.is_fork,
+           {dependent_select},
            MIN(fu.rrf) OVER () AS mn,
            MAX(fu.rrf) OVER () AS mx,
            LEAST({pivot_max}, GREATEST({pivot_min},
                EXP(AVG(LN(GREATEST(r.stars, 1))) OVER ()))) AS pivot
     FROM fused fu
-    JOIN repositories r ON r.id = fu.repo_id
+    JOIN repositories r ON r.id = fu.repo_id{signals_join}
 ),
 scored AS (
     SELECT *,
-           (lower(full_name) = $8 OR lower(name) = $8) AS exact_name,
+           {exact_name_expr} AS exact_name,
            CASE WHEN is_archived THEN {demote_archived}
                 WHEN is_fork THEN {demote_fork}
                 ELSE 1.0 END AS demotion,
            CASE WHEN mx > mn THEN (rrf - mn) / (mx - mn)
                 ELSE 1.0 END AS rel_norm,
            stars / (stars + pivot) AS stars_sat,
+           -- sat(dependents), fixed pivot (see config.DEPENDENTS_PIVOT
+           -- and ranking.saturate_dependents): NULL and 0 both score 0.
+           COALESCE(dependent_count, 0)::float8
+               / (COALESCE(dependent_count, 0)::float8 + {dep_pivot})
+               AS crit_sat,
            CASE WHEN pushed_at IS NULL THEN 0.0
                 ELSE {recency_floor} + (1.0 - {recency_floor}) * EXP(
                     - GREATEST(
@@ -333,9 +354,11 @@ ranked AS (
            (demotion * $18::float8 * rel_norm)     AS similarity_contribution,
            (demotion * $19::float8 * stars_sat)    AS stars_contribution,
            (demotion * $20::float8 * recency_norm) AS recency_contribution,
+           (demotion * $34::float8 * crit_sat)     AS criticality_contribution,
            (demotion * ($18::float8 * rel_norm
                       + $19::float8 * stars_sat
-                      + $20::float8 * recency_norm)) AS hybrid_score
+                      + $20::float8 * recency_norm
+                      + $34::float8 * crit_sat)) AS hybrid_score
     FROM scored
     ORDER BY exact_name DESC, hybrid_score DESC, stars DESC
     LIMIT $22::int
@@ -348,14 +371,173 @@ FROM ranked rk
 LEFT JOIN repository_embeddings e
        ON e.repo_id = rk.repo_id AND e.model_name = $2
 ORDER BY rk.exact_name DESC, rk.hybrid_score DESC, rk.stars DESC
-""".format(
-    dim=EMBEDDING_DIM,
-    pivot_min=STARS_PIVOT_MIN,
-    pivot_max=STARS_PIVOT_MAX,
-    recency_floor=RECENCY_FLOOR,
-    demote_archived=DEMOTION_ARCHIVED,
-    demote_fork=DEMOTION_FORK,
-)
+"""
+
+# The two fts_hits inner shapes. Phase 1 is the ADR 0018 statement
+# verbatim. Phase 2 (ADR 0019) folds repository_enrichment in without
+# giving up phase 1's execution shape (coverage evaluated inline during
+# ONE bitmap heap scan — the measured-fast plan): the first arm is that
+# same scan hash-LEFT-JOINed against the small per-repo enrichment
+# flags CTE, and a second UNION ALL arm adds the repos reachable ONLY
+# through enrichment (their own fields match nothing — the Doc2Query
+# case). The NOT in arm two is what keeps the arms disjoint.
+_FTS_INNER_PHASE1 = """\
+        SELECT r.id AS repo_id, r.stars,
+               {coverage_expr} AS coverage
+        FROM repositories r
+        WHERE (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
+          AND ($10::text   IS NULL OR r.primary_language = $10)
+          AND ($11::text[] IS NULL OR r.topics && $11::text[])
+          AND ($12::int    IS NULL OR r.stars >= $12)
+          AND ($13::bool = FALSE OR r.is_archived = FALSE)"""
+
+_FTS_INNER_PHASE2 = """\
+        SELECT r.id AS repo_id, r.stars,
+               {coverage_expr} AS coverage
+        FROM repositories r
+        LEFT JOIN enrich_cov ec ON ec.repo_id = r.id
+        WHERE (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
+          AND ($10::text   IS NULL OR r.primary_language = $10)
+          AND ($11::text[] IS NULL OR r.topics && $11::text[])
+          AND ($12::int    IS NULL OR r.stars >= $12)
+          AND ($13::bool = FALSE OR r.is_archived = FALSE)
+        UNION ALL
+        SELECT r.id AS repo_id, r.stars,
+               {coverage_expr} AS coverage
+        FROM enrich_cov ec
+        JOIN repositories r ON r.id = ec.repo_id
+        WHERE ec.is_member
+          AND NOT (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
+          AND ($10::text   IS NULL OR r.primary_language = $10)
+          AND ($11::text[] IS NULL OR r.topics && $11::text[])
+          AND ($12::int    IS NULL OR r.stars >= $12)
+          AND ($13::bool = FALSE OR r.is_archived = FALSE)"""
+
+# Phase 2's extra CTE: per-repo enrichment term flags. One GIN probe
+# selects enrichment rows sharing at least ONE query lexeme ($32);
+# bool_or folds them into per-slot booleans (cheaper than concatenating
+# tsvectors — no detoast/merge, hash-aggregatable) plus is_member: did
+# any single row meet the same pairwise bar ($7) the light fields face.
+# Cross-source coverage combines through bool_or; cross-source pairwise
+# membership does not (rows are probed individually) — a repo whose two
+# enrichment rows each carry ONE different query term misses the
+# enrichment-only arm; accepted, the LLM rows carry 5-8 queries each.
+# Empty enrichment table -> empty CTE -> the LEFT JOIN yields NULLs,
+# arm two yields nothing, and the lane is exactly phase 1.
+def _phase2_ctes() -> str:
+    flag_lines = ",\n".join(
+        f"           bool_or(search_tsv @@ ${n}) AS c{i}"
+        for i, n in enumerate(range(23, 23 + FTS_COVERAGE_SLOTS), start=1)
+    )
+    return (
+        "enrich_cov AS (\n"
+        "    SELECT repo_id,\n"
+        f"{flag_lines},\n"
+        "           bool_or(search_tsv @@ $7)  AS is_member\n"
+        "    FROM repository_enrichment\n"
+        "    WHERE search_tsv @@ $32::tsquery\n"
+        "    GROUP BY repo_id\n"
+        "),\n"
+    )
+
+# Phase 1 must still *bind* $32/$33 (a prepared statement's parameter
+# list is inferred from the query text, and search() always sends 34
+# arguments). This never-referenced CTE types them and costs nothing.
+_PHASE1_PARAM_ANCHOR = """\
+params_anchor AS (
+    SELECT $32::text AS q_any, $33::text AS norm_name
+),
+"""
+
+_EXACT_NAME_PHASE1 = "(lower(full_name) = $8 OR lower(name) = $8)"
+# The normalised comparison is guarded so a NULL $33 (empty or
+# multi-word query) yields FALSE, never NULL — exact_name feeds an
+# ORDER BY ... DESC, where a NULL would sort above TRUE.
+_EXACT_NAME_PHASE2 = """(lower(full_name) = $8 OR lower(name) = $8
+               OR ($33::text IS NOT NULL
+                   AND (translate(lower(full_name), '-._', '') = $33
+                        OR translate(lower(name), '-._', '') = $33)))"""
+
+_NAME_NORM_SCORE_ARM = """
+                          OR translate(lower(r.full_name), '-._', '') = $33
+                          OR translate(lower(r.name), '-._', '') = $33"""
+_NAME_NORM_WHERE_ARM = """
+               OR translate(lower(r.full_name), '-._', '') = $33
+               OR translate(lower(r.name), '-._', '') = $33"""
+
+
+def _coverage_expr(with_enrichment: bool) -> str:
+    slots = range(23, 23 + FTS_COVERAGE_SLOTS)
+    if with_enrichment:
+        parts = [
+            f"(r.search_tsv_light @@ ${n}"
+            f" OR COALESCE(ec.c{i}, FALSE))::int"
+            for i, n in enumerate(slots, start=1)
+        ]
+    else:
+        parts = [f"(r.search_tsv_light @@ ${n})::int" for n in slots]
+    return ("\n             + ").join(parts)
+
+
+def _build_search_sql(phase2: bool) -> str:
+    """Render the search statement for one PHASE2_RETRIEVAL setting.
+
+    Both variants bind the same 34 parameters and return the same
+    columns (phase 1 hard-codes dependent_count NULL, so the
+    criticality term is exactly 0 and hybrid_score is bit-identical to
+    the ADR 0018 statement). That equivalence is what makes the flag a
+    safe rollback lever *and* lets a flag-off deploy be verified as
+    no-behavior-change before enrichment is switched on.
+    """
+    label = MODEL_NAME.replace("'", "''")
+    if phase2:
+        slots = dict(
+            leading_ctes=_phase2_ctes(),
+            membership_doc=(
+                ", OR any two terms in a single enrichment row "
+                "(the UNION ALL arm)"
+            ),
+            coverage_doc=" or enrichment",
+            fts_inner=_FTS_INNER_PHASE2.format(
+                coverage_expr=_coverage_expr(True)
+            ),
+            name_norm_score_arm=_NAME_NORM_SCORE_ARM,
+            name_norm_where_arm=_NAME_NORM_WHERE_ARM,
+            dependent_select="sg.dependent_count",
+            signals_join=(
+                "\n    LEFT JOIN repository_signals sg"
+                " ON sg.repo_id = fu.repo_id"
+            ),
+            exact_name_expr=_EXACT_NAME_PHASE2,
+        )
+    else:
+        slots = dict(
+            leading_ctes=_PHASE1_PARAM_ANCHOR,
+            membership_doc="",
+            coverage_doc="",
+            fts_inner=_FTS_INNER_PHASE1.format(
+                coverage_expr=_coverage_expr(False)
+            ),
+            name_norm_score_arm="",
+            name_norm_where_arm="",
+            dependent_select="NULL::int AS dependent_count",
+            signals_join="",
+            exact_name_expr=_EXACT_NAME_PHASE1,
+        )
+    return _SEARCH_SQL_TEMPLATE.format(
+        dim=EMBEDDING_DIM,
+        model_label=label,
+        pivot_min=STARS_PIVOT_MIN,
+        pivot_max=STARS_PIVOT_MAX,
+        dep_pivot=DEPENDENTS_PIVOT,
+        recency_floor=RECENCY_FLOOR,
+        demote_archived=DEMOTION_ARCHIVED,
+        demote_fork=DEMOTION_FORK,
+        **slots,
+    )
+
+
+_SEARCH_SQL = _build_search_sql(PHASE2_RETRIEVAL)
 
 
 def _vector_to_pg(vector: List[float]) -> str:
@@ -392,6 +574,17 @@ def fuzzy_name_query(query: str) -> str:
     `%` matches nothing — the cheap off-switch)."""
     q = name_query(query)
     return q if q and len(q.split()) <= NAME_FUZZY_MAX_TOKENS else ""
+
+
+def normalized_name_query(query: str) -> Optional[str]:
+    """$33: the punctuation-normalised form for exact-name matching
+    ("nextjs" == "next.js"), or None to disable the arm. None rather
+    than '' because a repo named only punctuation ("...") normalises to
+    the empty string and must not exact-match an emptyish query; NULL
+    comparisons are never true. Multi-word queries keep the arm off —
+    names don't contain spaces, and normalisation only strips [-._]."""
+    q = normalise_name(query)
+    return q if q and " " not in query.strip() else None
 
 
 def coverage_slots(lexemes: List[str]) -> List[str]:
@@ -504,6 +697,9 @@ async def search(
                 limit,                          # $22
                 *coverage_slots(list(tsq["lexemes"] or [])),  # $23-$30
                 fuzzy_name_query(query),        # $31
+                tsq["q_any"],                   # $32
+                normalized_name_query(query),   # $33
+                weights.criticality,            # $34
             )
 
     return [
@@ -522,6 +718,7 @@ async def search(
             similarity_contribution=float(row["similarity_contribution"]),
             stars_contribution=float(row["stars_contribution"]),
             recency_contribution=float(row["recency_contribution"]),
+            criticality_contribution=float(row["criticality_contribution"]),
         )
         for row in rows
     ]
