@@ -641,27 +641,69 @@ class _CollectStats:
         self.dropped_queries = 0
 
 
-async def _process_payload(
-    pool, session, embedder, repo_id: str, doc: str, payload: dict,
-    model: str, prompt_version: str, stats: _CollectStats,
+# Batch sizing for the collect pipeline. Per-repo processing was
+# measured at ~60 min per 8K-result batch: one embed call per repo
+# plus one INSERT round-trip per row over ~350ms WAN RTT. Grouping
+# repos per embed call and using executemany turns that into ~4-5 min.
+_FILTER_GROUP_REPOS = 16       # repos per /embed call (~130 texts)
+_UPSERT_FLUSH_ROWS = 500       # rows per executemany round trip
+
+
+async def _process_payloads_bulk(
+    pool, embedder, items, model: str, prompt_version: str,
+    stats: _CollectStats,
 ) -> None:
-    """Sanitize + Doc2Query--filter one generation and upsert its row.
-    Shared by every provider backend."""
-    queries = _sane_strings(payload.get("queries", []), MAX_QUERIES, 120)
-    kept = await _filter_queries(session, embedder, doc, queries)
-    stats.dropped_queries += len(queries) - len(kept)
-    description = " ".join(
-        str(payload.get("description", "")).split()
-    )[:800] or None
-    aliases = _sane_strings(payload.get("aliases", []), MAX_ALIASES, 40)
-    categories = _sane_strings(payload.get("categories", []), MAX_CATEGORIES, 60)
-    if not (kept or description or aliases or categories):
-        return
-    await pool.execute(
-        _UPSERT_SQL, repo_id, description, kept, aliases, categories,
-        model, prompt_version,
-    )
-    stats.written += 1
+    """Sanitize + Doc2Query--filter + upsert a whole batch of
+    generations. ``items`` is a list of (repo_id, doc_text, payload).
+
+    Phase 1 groups many repos' (doc + queries) texts into single embed
+    calls; phase 2 flushes rows with executemany. Same semantics as
+    the old per-repo path, two orders of magnitude fewer round trips.
+    """
+    prepared = []       # (repo_id, description, queries, aliases, cats)
+    for group_start in range(0, len(items), _FILTER_GROUP_REPOS):
+        group = items[group_start:group_start + _FILTER_GROUP_REPOS]
+        texts: List[str] = []
+        spans = []       # (repo_id, doc_index, [query_indices], payload)
+        for repo_id, doc, payload in group:
+            queries = _sane_strings(payload.get("queries", []), MAX_QUERIES, 120)
+            doc_idx = len(texts)
+            texts.append(doc)
+            q_idx = []
+            for q in queries:
+                q_idx.append(len(texts))
+                texts.append(q)
+            spans.append((repo_id, doc_idx, q_idx, payload))
+        vectors = await embedder.embed(texts)
+
+        for repo_id, doc_idx, q_idx, payload in spans:
+            doc_vec = vectors[doc_idx]
+            norm_d = math.sqrt(sum(x * x for x in doc_vec)) or 1.0
+            kept = []
+            for qi in q_idx:
+                vec = vectors[qi]
+                norm_q = math.sqrt(sum(x * x for x in vec)) or 1.0
+                cos = sum(a * b for a, b in zip(doc_vec, vec)) / (norm_d * norm_q)
+                if cos >= QUERY_MIN_COSINE:
+                    kept.append(texts[qi])
+                else:
+                    stats.dropped_queries += 1
+            description = " ".join(
+                str(payload.get("description", "")).split()
+            )[:800] or None
+            aliases = _sane_strings(payload.get("aliases", []), MAX_ALIASES, 40)
+            categories = _sane_strings(
+                payload.get("categories", []), MAX_CATEGORIES, 60)
+            if kept or description or aliases or categories:
+                prepared.append((repo_id, description, kept, aliases,
+                                 categories, model, prompt_version))
+
+    for start in range(0, len(prepared), _UPSERT_FLUSH_ROWS):
+        flush = prepared[start:start + _UPSERT_FLUSH_ROWS]
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.executemany(_UPSERT_SQL, flush)
+        stats.written += len(flush)
 
 
 async def _fetch_docs(pool, repo_ids) -> Dict[str, str]:
@@ -709,15 +751,15 @@ async def collect(model_hint: Optional[str]) -> None:
                             "found — inspect the resource", entry["id"])
                         continue
                     docs = await _fetch_docs(pool, repo_ids.values())
-                    for key, payload in _gemini_results(responses_file):
-                        repo_id = repo_ids.get(key)
-                        if payload is None or repo_id not in docs:
-                            continue
-                        await _process_payload(
-                            pool, session, embedder, repo_id, docs[repo_id],
-                            payload, entry["model"], entry["prompt_version"],
-                            stats,
-                        )
+                    items = [
+                        (repo_ids[key], docs[repo_ids[key]], payload)
+                        for key, payload in _gemini_results(responses_file)
+                        if payload is not None and repo_ids.get(key) in docs
+                    ]
+                    await _process_payloads_bulk(
+                        pool, embedder, items, entry["model"],
+                        entry["prompt_version"], stats,
+                    )
                 else:
                     if anthropic_client is None:
                         anthropic_client = _anthropic_client()
@@ -730,6 +772,7 @@ async def collect(model_hint: Optional[str]) -> None:
                         )
                         continue
                     docs = await _fetch_docs(pool, repo_ids.values())
+                    items = []
                     for result in anthropic_client.messages.batches.results(
                             entry["id"]):
                         if result.result.type != "succeeded":
@@ -752,11 +795,11 @@ async def collect(model_hint: Optional[str]) -> None:
                             logger.warning("%s: unparseable output",
                                            result.custom_id)
                             continue
-                        await _process_payload(
-                            pool, session, embedder, repo_id, docs[repo_id],
-                            payload, entry["model"], entry["prompt_version"],
-                            stats,
-                        )
+                        items.append((repo_id, docs[repo_id], payload))
+                    await _process_payloads_bulk(
+                        pool, embedder, items, entry["model"],
+                        entry["prompt_version"], stats,
+                    )
 
                 _state_mark_collected(entry["id"])
                 logger.info(
