@@ -26,7 +26,7 @@ from .config import (
     EMBEDDING_MAX_RETRIES,
     EMBEDDING_RETRY_BACKOFF_SECONDS,
     EMBEDDING_TIMEOUT_SECONDS,
-    MODEL_NAME,
+    ENCODER_NAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,10 @@ class EmbeddingClient:
         # query/passage prefixes — embed the raw text as-is. Asymmetric
         # models like e5 or bge-large *do* want a "query: " prefix; if
         # we ever swap to one, that change goes here.
-        payload = {"texts": [query], "model": MODEL_NAME}
+        # ENCODER_NAME, not the storage label: "+enrich" labels name a
+        # document construction, and query vectors must come from the
+        # same encoder either way.
+        payload = {"texts": [query], "model": ENCODER_NAME}
 
         last_error: str = ""
         for attempt in range(EMBEDDING_MAX_RETRIES + 1):

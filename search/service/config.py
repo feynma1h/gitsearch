@@ -32,6 +32,12 @@ import os
 # enriched document, or query and document vectors stop sharing a space.
 MODEL_NAME: str = os.getenv("EMBEDDINGS_MODEL_LABEL", "BAAI/bge-small-en-v1.5")
 
+# The encoder the embedding service actually runs — the label minus any
+# "+doc-construction" suffix. Query embedding requests THIS (the
+# service validates it against its loaded model); the full label is
+# only ever a repository_embeddings key.
+ENCODER_NAME: str = MODEL_NAME.split("+", 1)[0]
+
 # Vector dimension; baked into the SQL schema (vector(384)). See ADR 0007.
 EMBEDDING_DIM: int = 384
 
