@@ -5,10 +5,10 @@
 --   1. Run multiple models side-by-side for A/B comparison
 --   2. Track when each embedding was generated
 --   3. Drop and re-embed without disturbing the metadata
--- See ADR 0005 for the full rationale.
+-- See ADR 0006 for the full rationale.
 --
--- Vector dimension is 384 to match BAAI/bge-small-en-v1.5 (ADR 0006).
--- HNSW is used over IVFFlat (ADR 0009).
+-- Vector dimension is 384 to match BAAI/bge-small-en-v1.5 (ADR 0007).
+-- HNSW is used over IVFFlat (ADR 0011).
 --
 -- Run order for a fresh setup:
 --   1. Apply this migration (creates extension + table; NO HNSW index yet).

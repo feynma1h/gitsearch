@@ -8,6 +8,8 @@
 --   SELECT ... WHERE readme_fetched_at IS NULL ORDER BY stars DESC LIMIT N
 -- runs on every batch fetch and a partial index keeps it cheap as the table
 -- fills up.
+--
+-- See ADR 0004 (`readme_status` distinguishes "not tried" from "no README").
 
 ALTER TABLE repositories
     ADD COLUMN IF NOT EXISTS readme_fetched_at TIMESTAMPTZ,

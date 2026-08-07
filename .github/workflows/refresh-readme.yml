@@ -36,7 +36,16 @@ jobs:
         run: python -m src.readme_pass --top-n 100000 --deadline-seconds 18000
       - name: Probe remaining work
         id: probe
-        run: python scripts/check_progress.py --stage readme || echo "stage_done=true" >> $GITHUB_ENV
+        # Exit 1 (stage complete) is a normal outcome here; anything
+        # above that is a probe failure and must fail the job rather
+        # than end it green. The rechunk gate reads `remaining`, which
+        # the script itself writes to $GITHUB_OUTPUT.
+        run: |
+          set +e
+          python scripts/check_progress.py --stage readme
+          rc=$?
+          set -e
+          if [ $rc -gt 1 ]; then exit $rc; fi
 
   rechunk:
     needs: readme-chunk

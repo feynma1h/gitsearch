@@ -1,4 +1,4 @@
--- Repositories table.
+-- Migration 0001: repositories table.
 --
 -- `id` is the GitHub GraphQL node ID (a base64-encoded global ID), which is
 -- stable across renames and ownership transfers. We index `full_name` for

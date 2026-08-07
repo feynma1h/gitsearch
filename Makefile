@@ -11,7 +11,7 @@
 .DEFAULT_GOAL := help
 
 PSQL ?= psql
-PYTHON ?= python
+PYTHON ?= python3
 
 # Loaded from .env if present so DATABASE_URL etc. are available.
 ifneq (,$(wildcard .env))
@@ -56,10 +56,11 @@ migrate: ## Apply all SQL migrations in order (requires psql on host).
 	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0008_search_tsv_light.sql
 	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0009_repository_enrichment.sql
 	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0010_repository_signals.sql
+	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -f sql/0011_repository_enrichment_terms.sql
 
 # 0007/0008 rewrite the repositories table (generated tsvector columns),
 # which runs for minutes — that needs a session-mode connection on
-# Supabase, same reasoning as HNSW_DATABASE_URL below. 0009/0010 don't
+# Supabase, same reasoning as HNSW_DATABASE_URL below. 0009-0011 don't
 # rewrite anything but do build indexes past the pooler's statement
 # timeout, so they ride the same connection.
 MIGRATE_REWRITE_DATABASE_URL ?= $(subst :6543/,:5432/,$(DATABASE_URL))
@@ -76,13 +77,14 @@ migrate-compose: ## Apply migrations via the postgres container (no host psql ne
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0008_search_tsv_light.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0009_repository_enrichment.sql
 	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0010_repository_signals.sql
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-gitsearch} < sql/0011_repository_enrichment_terms.sql
 
 .PHONY: reset-db
 reset-db: ## DESTRUCTIVE: drop every project table, then re-apply migrations. Wipes the corpus.
 	@echo "This will DROP ALL DATA in $(DATABASE_URL) and re-create empty tables."
 	@echo "Press Ctrl-C within 5s to abort."
 	@sleep 5
-	$(PSQL) "$(DATABASE_URL)" -c "DROP TABLE IF EXISTS repository_enrichment, repository_signals, repository_guides, repository_embeddings, crawl_state, refresh_watermarks, repositories CASCADE;"
+	$(PSQL) "$(DATABASE_URL)" -c "DROP TABLE IF EXISTS repository_enrichment_terms, repository_enrichment, repository_signals, repository_guides, repository_embeddings, crawl_state, refresh_watermarks, repositories CASCADE;"
 	$(MAKE) migrate
 
 # ---------------------------------------------------------------------------
@@ -90,7 +92,7 @@ reset-db: ## DESTRUCTIVE: drop every project table, then re-apply migrations. Wi
 # ---------------------------------------------------------------------------
 
 .PHONY: crawl
-crawl: ## Run a full metadata crawl (~25 min for ~280K repos). Use once to populate.
+crawl: ## Run a full metadata crawl (~25 min for ~267K repos). Use once to populate.
 	cd crawler && $(PYTHON) -m src.main
 
 .PHONY: crawl-incremental

@@ -1,4 +1,5 @@
--- 0011: compact per-repo enrichment term set (ADR 0020 addendum).
+-- Migration 0011: repository_enrichment_terms — compact per-repo
+-- enrichment term set (ADR 0020 addendum).
 --
 -- The search lane never needs enrichment tsvectors' positions or
 -- weights — only lexeme membership (@@ against single terms and the
@@ -16,11 +17,19 @@
 -- and admitted repos still rank through coverage and stars.
 --
 -- Refresh: batch-time only, alongside the writers (mine_awesome,
--- enrich_llm --collect). `make refresh-enrichment-terms` reruns the
--- INSERT below; there are no online writers to race.
+-- enrich_llm --collect). Re-applying this file refreshes the table (it
+-- TRUNCATEs and re-INSERTs); there are no online writers to race.
+--
+-- Same operational note as 0009/0010: the INSERT folds every enrichment
+-- row and the GIN build follows it, both past the transaction pooler's
+-- statement timeout — run via the session pooler (port 5432), which is
+-- what `make migrate` does.
 --
 -- Removal (with the rest of phase 2): DROP TABLE
 -- repository_enrichment_terms;
+
+SET search_path = public, extensions;
+SET statement_timeout = 0;
 
 CREATE TABLE IF NOT EXISTS repository_enrichment_terms (
     repo_id text PRIMARY KEY
