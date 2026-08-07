@@ -300,3 +300,47 @@ Readings, recorded plainly:
 - Enrichment volume (full-corpus LLM) pushing the FTS lane past the
   latency bar → scope the bool_or CTE probe or split enrichment's GIN
   by source.
+
+## Scale incident and retrieval rework (2026-08-07)
+
+The full-corpus LLM collection (244,388 rows landing through the day)
+took `repository_enrichment` from 56K thin awesome-mined rows to 300K
+rows whose tsvectors are TOASTed kilobytes, and the enrichment CTE's
+any-lexeme anchor probe stopped being cheap: a common-word query
+("machine learning framework python") heap-fetched tens of thousands
+of rows, measured **34s warm** locally — and production, running the
+same statement against the same database, served **5s mean / 28s max
+over ~1,400 calls** that day. The last bullet of "What would change
+this decision" (enrichment volume pushing the FTS lane past the
+latency bar → scope the probe) is exactly what happened; this section
+records the scoping. Production was mitigated by flipping
+`PHASE2_RETRIEVAL=off` (the rollback lever working as designed) while
+the rework below shipped.
+
+Three structural changes (commit 91bb144, migration `sql/0011`):
+
+1. **`repository_enrichment_terms`** — one stripped lexeme-union
+   tsvector per repo (inline-small, no TOAST). Every lane probe reads
+   it instead of the fat source rows. Coverage flags are exact under
+   the union; arm two's membership bar moves from per-row pairwise
+   ($7) to whole-query websearch-AND over the union ($6) — measured:
+   the pairwise bar admitted 40K "members" from LLM text (common word
+   pairs are everywhere in generated queries), which both flooded the
+   lane and made the planner answer with a seq scan of repositories.
+   The Doc2Query premise argues for the whole-query bar anyway.
+2. **Bounded flag computation** — the FTS lane's own-field candidates
+   materialize once (`fts_own`) with per-slot own-term bits, capped by
+   a dominance bound: enrichment adds at most one coverage tier
+   (the LEAST(1,·) cap), so the top 2× lane-limit under own+1
+   ordering contains every possible lane entrant. Flags become PK
+   lookups for hundreds of repos instead of 12K+.
+3. **Name-lane repair** — the trigram arm is guarded
+   (`$31 <> '' AND name % $31`; an empty pattern can't use the GIN
+   index and one unindexable OR arm seq-scanned the chain on every
+   query, ~2.4s), and search runs under `force_custom_plan` so
+   disabled arms fold at plan time. This predates the incident — the
+   ADR 0020 exact-name arms shipped with it — and was only visible
+   once the CTE stopped dominating.
+
+Rankings were verified stable across the rework (gate trio, nextjs
+exact-name, category probes). Eval C ran on the reworked SQL.
