@@ -645,7 +645,9 @@ class _CollectStats:
 # measured at ~60 min per 8K-result batch: one embed call per repo
 # plus one INSERT round-trip per row over ~350ms WAN RTT. Grouping
 # repos per embed call and using executemany turns that into ~4-5 min.
-_FILTER_GROUP_REPOS = 32       # repos per /embed call (queries only, ~220 short texts)
+_FILTER_GROUP_REPOS = 14       # repos per /embed call — the embedding
+                               # service caps a batch at 128 texts and
+                               # 14 repos x up to 8 queries stays under
 _UPSERT_FLUSH_ROWS = 500       # rows per executemany round trip
 
 
