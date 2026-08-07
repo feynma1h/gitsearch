@@ -19,14 +19,13 @@ from datetime import datetime
 from typing import List
 
 
-def generate_shards(min_stars: int = 200, max_stars: int = 500_000) -> List[str]:
+def generate_shards(min_stars: int = 200) -> List[str]:
     """Return a list of GitHub search query fragments covering the star range.
 
     Args:
         min_stars: Lower bound (inclusive). Defaults to 200 to keep the crawl
             tractable; below ~200 stars there are too many repos to fit in
             GitHub's 1000-results-per-query cap even with single-star shards.
-        max_stars: Upper bound used only to bound the open-ended top shard.
 
     Returns:
         A list of query fragments like ``["stars:200..200", "stars:201..201", ...]``
@@ -37,10 +36,6 @@ def generate_shards(min_stars: int = 200, max_stars: int = 500_000) -> List[str]
             "min_stars must be >= 200; lower ranges exceed GitHub's "
             "1000-results-per-query cap"
         )
-    # NOTE: max_stars is currently unimplemented and reserved for future
-    # bounded-top-shard support. The final shard remains open-ended.
-    if max_stars <= min_stars:
-        raise ValueError("max_stars must be greater than min_stars")
 
     # (range_start, range_end_exclusive, width). The crawler will emit shards
     # of `width` stars covering [range_start, range_end_exclusive).

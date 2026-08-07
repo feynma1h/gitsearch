@@ -14,10 +14,10 @@ Usage:
 
 Generates, per repo: 5-8 synthetic plain-English queries, a one-paragraph
 "what is this for" description, name aliases, and category tags — the
-category vocabulary canonical repos' own metadata lacks (ADR 0020; the
-research plan's highest-leverage single change). Rows land in
-``repository_enrichment`` under source='llm' with model + prompt_version
-provenance, beside (never merged with) the awesome-mined rows.
+category vocabulary canonical repos' own metadata lacks (ADR 0020). Rows
+land in ``repository_enrichment`` under source='llm' with model +
+prompt_version provenance, beside (never merged with) the awesome-mined
+rows.
 
 Design notes:
   - **Message Batches API** (50% discount) with **structured outputs**
@@ -52,7 +52,6 @@ import json
 import logging
 import math
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -96,9 +95,9 @@ GEMINI_DRAIN_POLL_SECONDS = 120
 # Doc2Query-- consistency gate: a generated query must actually retrieve
 # its own document. bge-small cosine between query and source doc;
 # below this, the query is treated as drift/hallucination and dropped.
+# A repo may legitimately end with zero queries after filtering.
 QUERY_MIN_COSINE = 0.45
 MAX_QUERIES = 8
-MIN_QUERIES_KEPT = 0          # a repo may end with fewer after filtering
 MAX_ALIASES = 5
 MAX_CATEGORIES = 6
 
@@ -375,7 +374,10 @@ _GEMINI_SCHEMA = {
 def _gemini_key() -> str:
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
-        raise SystemExit("GEMINI_API_KEY is not set (repo .env has it).")
+        raise SystemExit(
+            "GEMINI_API_KEY is not set. Copy .env.example to .env and fill "
+            "it in, or export the key for this run."
+        )
     return key
 
 
@@ -488,7 +490,6 @@ def submit_gemini(ids: List[str], model: str) -> None:
     """Sequential drain-submit: one chunk in the queue at a time (the
     enqueued-tokens quota), documents fetched per chunk so a day-long
     run holds megabytes, not the corpus."""
-    state = _load_state()
     for start in range(0, len(ids), GEMINI_BATCH_CHUNK):
         chunk = ids[start:start + GEMINI_BATCH_CHUNK]
         docs = asyncio.run(_build_docs(chunk))
@@ -612,29 +613,6 @@ def _sane_strings(values: Sequence[str], cap: int, max_len: int) -> List[str]:
     return out
 
 
-async def _filter_queries(
-    session: aiohttp.ClientSession,
-    embedder: EmbeddingClient,
-    doc_text: str,
-    queries: List[str],
-) -> List[str]:
-    """Keep queries that retrieve their own document (cosine gate)."""
-    if not queries:
-        return []
-    vectors = await embedder.embed([doc_text] + queries)
-    doc_vec, query_vecs = vectors[0], vectors[1:]
-    norm_d = math.sqrt(sum(x * x for x in doc_vec)) or 1.0
-    kept = []
-    for query, vec in zip(queries, query_vecs):
-        norm_q = math.sqrt(sum(x * x for x in vec)) or 1.0
-        cosine = sum(a * b for a, b in zip(doc_vec, vec)) / (norm_d * norm_q)
-        if cosine >= QUERY_MIN_COSINE:
-            kept.append(query)
-        else:
-            logger.debug("dropped query (cos=%.2f): %s", cosine, query)
-    return kept
-
-
 class _CollectStats:
     def __init__(self) -> None:
         self.written = 0
@@ -750,7 +728,7 @@ async def _fetch_docs(pool, repo_ids) -> Dict[str, str]:
     return docs
 
 
-async def collect(model_hint: Optional[str]) -> None:
+async def collect() -> None:
     state = _load_state()
     pending = [b for b in state["batches"] if not b["collected"]]
     if not pending:
@@ -874,7 +852,7 @@ def main() -> None:
     model = args.model or PROVIDER_MODELS[args.provider]
 
     if args.collect:
-        asyncio.run(collect(model))
+        asyncio.run(collect())
         return
 
     ids = asyncio.run(_select_pending(args.top_n, model))

@@ -36,12 +36,18 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .config import (
+    DEFAULT_CRITICALITY_WEIGHT,
     DEFAULT_EMBEDDING_SERVICE_URL,
     DEFAULT_LIMIT,
+    FULL_TEXT_WEIGHT,
     GUIDE_MODEL,
     GUIDE_RATE_LIMIT,
     MAX_LIMIT,
     MODEL_NAME,
+    NAME_WEIGHT,
+    PHASE2_RETRIEVAL,
+    RRF_K,
+    SEMANTIC_WEIGHT,
 )
 from .db import (
     CachedGuide,
@@ -56,22 +62,15 @@ from .db import (
 )
 from .embedding_client import EmbeddingClient, EmbeddingServiceError
 from .guide import GuideGenerationError, generate_guide
-from .repo_browser import RepoBrowser
-from .config import (
-    FULL_TEXT_WEIGHT,
-    NAME_WEIGHT,
-    RRF_K,
-    SEMANTIC_WEIGHT,
-)
-from .config import DEFAULT_CRITICALITY_WEIGHT, PHASE2_RETRIEVAL
 from .ranking import (
     DEFAULT_RECENCY_HALF_LIFE_DAYS,
+    DEFAULT_RECENCY_WEIGHT,
     DEFAULT_SIMILARITY_WEIGHT,
     DEFAULT_STARS_WEIGHT,
-    DEFAULT_RECENCY_WEIGHT,
     LaneWeights,
     ScoringWeights,
 )
+from .repo_browser import RepoBrowser
 
 # uvicorn only configures handlers for its own loggers; the root logger
 # gets none, so app records (the startup line, guide warnings) would

@@ -27,6 +27,7 @@ async def test_update_records_remaining_and_reset():
     reset = datetime.now(timezone.utc) + timedelta(minutes=5)
     await limiter.update(remaining=42, reset_at=reset)
     assert limiter.remaining == 42
+    assert limiter._reset_at == reset  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

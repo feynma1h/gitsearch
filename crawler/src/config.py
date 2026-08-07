@@ -29,7 +29,7 @@ DEFAULT_MIN_STARS: int = 200
 #
 # Earlier versions of this code defaulted to 15 workers and tripped the
 # secondary limit catastrophically: most shards aborted within minutes.
-# Dropping to 5 trades some crawl wall time (~25 min for the full ~280K
+# Dropping to 5 trades some crawl wall time (~25 min for the full ~267K
 # corpus) for the crawl actually completing where 15 aborts. See ADR 0001.
 DEFAULT_METADATA_WORKERS: int = 5
 

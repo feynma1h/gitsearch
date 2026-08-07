@@ -54,16 +54,21 @@ _README_SQL = """
     FROM intended
 """
 
-# Embedding progress: the indexer embeds any non-archived repo whose README
-# pass ran (readme_status IS NOT NULL) and that lacks an embedding — must
-# mirror indexer/pipeline/db.py::_FETCH_PENDING_SQL or "pending" drifts from
-# what `make index` will actually do.
+# Embedding progress for one label — EMBEDDINGS_MODEL_LABEL, the same var the
+# indexer and search service read. Both counts are label-scoped: ADR 0020 added
+# a second label ("+enrich-v1") and an unscoped count sums the two, printing
+# more embeddings than there are repos. `pending` mirrors
+# indexer/pipeline/db.py::_FETCH_PENDING_SQL, so it is what `make index` will
+# actually do; a "+enrich" label narrows further to repos that have enrichment
+# rows, so there it reads as an upper bound.
 _EMBED_SQL = """
     SELECT
-        (SELECT COUNT(*) FROM repository_embeddings)                   AS embeddings,
+        (SELECT COUNT(*) FROM repository_embeddings
+          WHERE model_name = $1)                                       AS embeddings,
         (SELECT COUNT(*)
            FROM repositories r
-           LEFT JOIN repository_embeddings e ON e.repo_id = r.id
+           LEFT JOIN repository_embeddings e
+                  ON e.repo_id = r.id AND e.model_name = $1
           WHERE r.readme_status IS NOT NULL
             AND r.is_archived = FALSE
             AND e.repo_id IS NULL)                                     AS pending
@@ -75,11 +80,12 @@ _WATERMARK_SQL = "SELECT last_metadata_crawl_at FROM crawl_state WHERE id = 1"
 
 async def _audit(top_n: int) -> None:
     dsn = os.environ["DATABASE_URL"]
+    label = os.getenv("EMBEDDINGS_MODEL_LABEL", "BAAI/bge-small-en-v1.5")
     conn = await asyncpg.connect(dsn, statement_cache_size=0)
     try:
         meta = await conn.fetchrow(_METADATA_SQL)
         readme = await conn.fetchrow(_README_SQL, top_n)
-        embed = await conn.fetchrow(_EMBED_SQL)
+        embed = await conn.fetchrow(_EMBED_SQL, label)
         try:
             watermark = await conn.fetchval(_WATERMARK_SQL)
         except asyncpg.UndefinedTableError:
@@ -101,7 +107,7 @@ async def _audit(top_n: int) -> None:
         print(f"    status empty:     {readme['empty']:>9,}")
         print(f"    status error:     {readme['error']:>9,}  (retryable)")
 
-        print("\n── Embeddings (repository_embeddings) ──────────────────")
+        print(f"\n── Embeddings ({label}) ─────────────────")
         print(f"  embeddings stored:  {embed['embeddings']:>9,}")
         print(f"  PENDING (to embed): {embed['pending']:>9,}  <- `make index` will embed these")
 

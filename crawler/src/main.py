@@ -39,7 +39,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-stars", type=int, default=DEFAULT_MIN_STARS,
         help=f"Lower bound on stars (default: {DEFAULT_MIN_STARS}). "
-             f"~200 yields the target ~100K repos; see ADR 0003.",
+             f"~200 currently yields ~280K repos; see ADR 0003.",
     )
     parser.add_argument(
         "--deadline-seconds", type=int, default=None,

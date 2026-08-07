@@ -9,6 +9,10 @@ worth pinning down.
 
 from __future__ import annotations
 
+import dataclasses
+
+import pytest
+
 from src.readme_client import README_MAX_CHARS, ReadmeResult, _finalize
 
 
@@ -54,10 +58,6 @@ def test_finalize_strips_surrounding_whitespace():
 
 def test_readme_result_is_frozen():
     """ReadmeResult is a frozen dataclass — attempts to mutate must fail."""
-    import dataclasses
     r = ReadmeResult(status="ok", content="x")
-    try:
+    with pytest.raises(dataclasses.FrozenInstanceError):
         r.status = "error"  # type: ignore[misc]
-    except dataclasses.FrozenInstanceError:
-        return
-    raise AssertionError("ReadmeResult should be frozen")

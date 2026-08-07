@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 # We store at most this many characters of README. Embedding models cap input
 # around 8K tokens (~32KB chars); the first 8KB of a README dominates
-# semantic relevance for our use case and keeps the DB lean at 100K rows.
+# semantic relevance for our use case and keeps the DB lean across the
+# full ~267K-row corpus.
 README_MAX_CHARS = 8_192
 
 # Maximum bytes we'll download before truncating, even from the raw download

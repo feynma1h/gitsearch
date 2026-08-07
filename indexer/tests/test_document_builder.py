@@ -7,7 +7,7 @@ field ordering, optional-field handling, truncation, and hash stability.
 
 from __future__ import annotations
 
-from pipeline.config import SOURCE_TEXT_MAX_CHARS
+from pipeline.config import ENRICHMENT_DESC_MAX_CHARS, SOURCE_TEXT_MAX_CHARS
 from pipeline.document_builder import (
     RepoForEmbedding,
     build_source_text,
@@ -135,7 +135,6 @@ def test_enrichment_sections_sit_between_metadata_and_readme():
 
 
 def test_enrichment_description_is_capped():
-    from pipeline.config import ENRICHMENT_DESC_MAX_CHARS
     text = build_source_text(_repo(
         readme=None,
         enrichment_description="d" * (ENRICHMENT_DESC_MAX_CHARS * 2),

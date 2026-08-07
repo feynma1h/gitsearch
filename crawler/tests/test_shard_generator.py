@@ -86,8 +86,6 @@ def test_min_stars_above_all_bands_still_emits_open_shard():
 def test_invalid_args_raise():
     with pytest.raises(ValueError):
         generate_shards(min_stars=-1)
-    with pytest.raises(ValueError):
-        generate_shards(min_stars=100, max_stars=50)
 
 
 # ---------------------------------------------------------------------------

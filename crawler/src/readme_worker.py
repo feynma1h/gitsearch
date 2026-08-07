@@ -15,7 +15,7 @@ from typing import Optional
 import asyncpg
 
 from .db import update_readme
-from .rate_limiter import RateLimiter, parse_rest_rate_limit
+from .rate_limiter import RateLimiter
 from .readme_client import ReadmeClient
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,6 @@ class ProgressCounter:
         self._total = total
         self._done = 0
         self._log_every = log_every
-        self._lock = asyncio.Lock()
         self._start = time.monotonic()
 
     def tick(self) -> None:

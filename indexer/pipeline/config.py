@@ -5,7 +5,7 @@ Same layering principles as the crawler:
   - CLI flags override these per-run.
   - Env vars (DATABASE_URL, EMBEDDING_SERVICE_URL) handle per-environment.
 
-See ../docs/decisions/ for the rationale behind each value.
+See ``docs/decisions/`` (repo root) for the rationale behind each value.
 """
 
 from __future__ import annotations

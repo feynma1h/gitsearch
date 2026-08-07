@@ -376,19 +376,23 @@ def main() -> None:
     print(f"pool: {len(pool)} queries, {total_pairs} pairs "
           f"({len(todo)} unjudged) from {len(run_paths)} runs")
 
+    model = args.model or PROVIDER_MODELS[args.provider]
+
     if args.dry_run or not todo:
         if todo:
-            # ~700 tokens in + a handful out per pair; Flash-Lite pricing.
-            print(f"estimated cost at gemini-2.5-flash-lite rates: "
-                  f"~${len(todo) * 700 * 0.10 / 1e6:.2f}")
+            # Order-of-magnitude only: ~700 tokens in + a handful out
+            # per pair at a blended $0.10/MTok. Lite-tier rates differ
+            # per provider and per model generation — price the model
+            # named here against the vendor table before committing to
+            # a full run (ADR 0020).
+            print(f"estimated cost for {len(todo)} pairs on {model}: "
+                  f"~${len(todo) * 700 * 0.10 / 1e6:.2f} (rough)")
         return
 
-    model = args.model or PROVIDER_MODELS[args.provider]
     if args.provider == "anthropic":
         print("WARNING: anthropic judge is the same model family as the "
               "product's guide pipeline; document this caveat and run "
               "--spot-check on ~50 pairs.", file=sys.stderr)
-    qrels.setdefault("judge", {})
     qrels["judge"] = {"provider": args.provider, "model": model,
                       "prompt_version": qrels.get("prompt_version", "umbrela-v1")}
 
