@@ -173,10 +173,13 @@ consistency-filter drops, average 6.7 queries per repo.
 should show real numbers):** the run was initially estimated at ~$24
 using the retired 2.5-flash-lite tier's batch rates ($0.05/$0.20 per
 MTok) against the 3.1-flash-lite model actually being run — whose
-true batch rates are $0.125/$0.75. Measured full-corpus cost:
-**~$69** (per-repo ~1,009 tokens in / 208 out, thinking pinned to
-zero and verified zero in usage metadata). The user re-approved
-completion at the corrected figure mid-run. Two quota mechanics also
+true batch rates are $0.125/$0.75. Final reconciled full-corpus
+cost, summed from per-request usage metadata across all 33 batch
+response files: **$66.45** (227.6M tokens in / 50.7M out over
+244,396 requests — per-repo ~931 in / 207 out, thinking pinned to
+zero and verified zero in usage metadata; all requests succeeded,
+244,388 rows collected, 8 dropped client-side as unparseable). The
+user re-approved completion at the corrected figure mid-run. Two quota mechanics also
 shaped the run and are worth a future reader's minute: Tier-1
 flash-lite batch allows only 10M enqueued tokens (jobs above ~9K
 requests are unlaunchable — the drain runs sequential 8K chunks),
