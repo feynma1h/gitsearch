@@ -27,8 +27,17 @@ async def create_pool() -> asyncpg.Pool:
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
         raise RuntimeError("DATABASE_URL is not set.")
+
+    async def _init(conn: asyncpg.Connection) -> None:
+        # Supabase sets statement_timeout on the role, so long pending
+        # fetches get cancelled even through the session pooler. Lift it
+        # per connection; only sticks in session mode (port 5432), which
+        # is where the long fetches run.
+        await conn.execute("SET statement_timeout = 0")
+
     return await asyncpg.create_pool(
         dsn=dsn, min_size=2, max_size=10, statement_cache_size=0,
+        init=_init,
     )
 
 
