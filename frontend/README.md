@@ -4,8 +4,9 @@ A single-file HTML/JS UI for the search service.
 
 No build step. No framework. One `index.html` that loads in any
 browser and talks to the search service via `fetch()`. The visual
-design comes from a Claude Design treatment (source kept in
-[`docs/design/`](../docs/design/)), ported here by hand.
+design is a warm-paper editorial treatment: an ink-and-cream
+palette, Newsreader serif for headings and the wordmark, and
+deliberately designed wait states for the scale-to-zero cold start.
 
 ## Run locally
 
@@ -51,10 +52,11 @@ frontend's deployed origin.
   with three weight sliders (relevance / popularity / recency);
   changing any filter or weight re-runs the current search
   server-side.
-- **Honest waits.** The API scales to zero, so the first search
-  after an idle spell takes ~15 s. If a first search is genuinely
-  slow, the skeleton swaps to a staged "waking up the engine"
-  explainer. Warm searches just show skeletons.
+- **Honest waits.** Both Cloud Run services scale to zero, so a
+  first search after a long idle spell can take about a minute
+  (ADR 0019). When one is genuinely slow, the skeleton swaps to a
+  staged "waking up the engine" explainer. Warm searches just show
+  skeletons.
 - Results are cards: avatar (falls back to an initial if GitHub's
   image fails), name, description, language dot, stars, last
   updated, top-5 topics.
@@ -84,6 +86,19 @@ results checked for quality). Plausible-sounding queries can return
 bad results — "turn markdown into a website" returns converters in
 the *reverse* direction — so don't add or reword chips without
 re-verifying them against the deployed API.
+
+## Design decisions
+
+- **Filters and weights re-run the search server-side** rather than
+  re-ranking the results already on screen. A language filter should
+  change *which* repos come back, not hide 18 of the 20 you can see.
+- **The search-box placeholder is instructional, not an example.**
+  It reads "Describe what you need…". A concrete sample query was
+  the obvious alternative, but a placeholder is an implicit
+  recommendation, and that phrasing family returns poor results.
+- **The status line reports client-measured elapsed time.** Server
+  `took_ms` is around 130 ms, which renders as "0.1s" and says
+  nothing about the wait the reader actually sat through.
 
 ## What it deliberately doesn't do
 

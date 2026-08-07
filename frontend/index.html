@@ -4,20 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gitsearch — find GitHub repos by what they do</title>
-<meta name="description" content="Describe what you need in plain English and gitsearch finds the GitHub repos that do it — searching 250,000 repositories by what they do, with a quick-start guide for every result.">
+<meta name="description" content="Describe what you need in plain English and gitsearch finds the GitHub repos that do it — searching 244,000 repositories by what they do, with a quick-start guide for every result.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='4' y='24' font-family='Georgia,serif' font-weight='600' font-size='22' fill='%23211C15'%3Eg%3C/text%3E%3Ccircle cx='24' cy='22' r='3' fill='%23211C15'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..700&display=swap" rel="stylesheet">
 <style>
-  /* Design notes (2026-07 redesign, ported from the Claude Design treatment):
+  /* Design notes (2026-07 redesign):
      - Warm paper palette, serif (Newsreader) for headings and the wordmark,
        system stack for everything else. One webfont, non-italic subset only.
      - Single column, max 680px. Cards on a soft background.
      - Plain language on the surface; scoring machinery behind disclosures.
      - Theme: follows system preference until the user toggles; the choice
        persists in localStorage. body[data-th] carries the active theme.
-     - Every wait state is designed: cold start (~40s after idle) gets staged
+     - Every wait state is designed: cold start (~60s after idle) gets staged
        messages; first guide generation (~10-20s) narrates what's happening.
      - No layout shift: the status line has fixed height, skeletons match
        final card geometry. prefers-reduced-motion disables all animation. */
@@ -360,7 +360,7 @@
 <div class="main">
   <div class="hero" id="hero">
     <h1>What are you trying to build?</h1>
-    <p>Describe it in plain English and we’ll find the GitHub repos that can do it — searching 250,000 of them by what they do, with a quick‑start guide for every result.</p>
+    <p>Describe it in plain English and we’ll find the GitHub repos that can do it — searching 244,000 of them by what they do, with a quick‑start guide for every result.</p>
   </div>
   <div class="searched-gap" id="searched-gap" hidden></div>
 
@@ -630,7 +630,7 @@
     els.q.value = query;
     showPhase("waiting");
 
-    // The engine sleeps when unused. Narrate the ~40s wake against one
+    // The engine sleeps when unused. Narrate the ~60s wake against one
     // persistent clock, so stages track real elapsed time and an automatic
     // retry resumes the story mid-timeline instead of restarting it.
     if (!state.warmed) {
