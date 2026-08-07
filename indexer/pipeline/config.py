@@ -83,5 +83,7 @@ ENRICHMENT_DESC_MAX_CHARS: int = 600
 DEFAULT_SERVICE_URL: str = "http://localhost:8001"
 
 # Per-request timeout (seconds). The model can be slow on the first call
-# (lazy load) but should be quick after that.
-SERVICE_TIMEOUT_SECONDS: float = 60.0
+# (lazy load), and a full 128-text batch can run minutes on a thermally
+# throttled machine — a slow response beats a crashed run, because dying
+# here costs the whole pending refetch on respawn.
+SERVICE_TIMEOUT_SECONDS: float = float(os.getenv("EMBED_TIMEOUT_SECONDS", "300"))
