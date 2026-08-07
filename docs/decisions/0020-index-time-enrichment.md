@@ -344,3 +344,43 @@ Three structural changes (commit 91bb144, migration `sql/0011`):
 
 Rankings were verified stable across the rework (gate trio, nextjs
 exact-name, category probes). Eval C ran on the reworked SQL.
+
+### Eval C and the label decision (2026-08-07, post-rework)
+
+Two runs decompose the full-corpus LLM increment against the live
+2026-08-06 enrich-v1@k50 baseline (200 queries, qrels grown to 9,492
+judged pairs, judged@10 = 1.000 throughout):
+
+| comparison | ΔnDCG@10 | p | Δcanary | gate trio |
+| --- | --- | --- | --- | --- |
+| fixed SQL + v1 vectors (control) vs live | +0.008 | 0.047 | +0.012 | 3/3 |
+| + v2 vectors (variant C) vs control | +0.013 | 0.0003 | **−0.024** | 3/3 |
+| variant C vs live (combined) | +0.021 | 0.0001 | −0.012 | 3/3 |
+
+The control result is the decision: **the LLM text pays through the
+FTS lane alone** — the gate trio lands 3/3 on v1 vectors because
+coverage completion and the enrichment-only arm read
+`repository_enrichment` regardless of embedding label — and the SQL
+rework itself is a small, significant quality win on top of being
+mandatory. The **v1→v2 label flip is declined** for now: +0.013
+judged nDCG fails the ≥+0.03 increment bar, and the judge-independent
+canary suite moves the other way (−0.024; zustand's ecosystem tail
+replaced by generic-vocabulary noise, "infrastructure as code" losing
+terraform positions — the Doc2Query homogenization cost, hitting the
+dense lane precisely because it has no analogue of the FTS lane's
++1-coverage cap). With the qrels judged by the same model family that
+wrote the enrichment text, judged-nDCG-up/canary-down is exactly the
+shape same-family bias would take, and the flip should not ship on
+the biased-side metric. The planned 300-pair Anthropic spot-judge
+(`eval/spot_judge.py`, committed) needs an ANTHROPIC_API_KEY the
+environment lacks; run it before ever revisiting the flip. The
+enrich-v2 vectors and index stay banked under their label — a future
+increment that down-weights enrichment text in document construction
+(or caps its share of short docs) is the recorded mitigation path.
+
+Deploy sequence: revert prod's PHASE2_RETRIEVAL to off (incident
+mitigation, done via env), merge and deploy the reworked SQL, turn
+PHASE2_RETRIEVAL back on with EMBEDDINGS_MODEL_LABEL still
+enrich-v1, and verify latency on a quiet database — local latency
+measurements during the incident were contaminated by production's
+own degraded statements sharing the Micro instance.
