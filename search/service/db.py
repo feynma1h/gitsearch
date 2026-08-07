@@ -274,7 +274,7 @@ name_hits AS (
         FROM repositories r
         WHERE (lower(r.full_name) = $8
                OR lower(r.name) LIKE $9{name_norm_where_arm}
-               OR r.name % $31)
+               OR ($31::text <> '' AND r.name % $31))
           AND ($10::text   IS NULL OR r.primary_language = $10)
           AND ($11::text[] IS NULL OR r.topics && $11::text[])
           AND ($12::int    IS NULL OR r.stars >= $12)
@@ -374,13 +374,13 @@ ORDER BY rk.exact_name DESC, rk.hybrid_score DESC, rk.stars DESC
 """
 
 # The two fts_hits inner shapes. Phase 1 is the ADR 0018 statement
-# verbatim. Phase 2 (ADR 0020) folds repository_enrichment in without
-# giving up phase 1's execution shape (coverage evaluated inline during
-# ONE bitmap heap scan — the measured-fast plan): the first arm is that
-# same scan hash-LEFT-JOINed against the small per-repo enrichment
-# flags CTE, and a second UNION ALL arm adds the repos reachable ONLY
-# through enrichment (their own fields match nothing — the Doc2Query
-# case). The NOT in arm two is what keeps the arms disjoint.
+# verbatim. Phase 2 (ADR 0020) folds repository_enrichment in through
+# two bounded joins: arm one is phase 1's scan (materialized as
+# fts_own) LEFT JOINed against coverage flags computed for exactly
+# those candidates, and a second UNION ALL arm adds the repos
+# reachable ONLY through enrichment (their own fields match nothing —
+# the Doc2Query case), admitted by the strict pairwise bar. The NOT in
+# arm two is what keeps the arms disjoint.
 _FTS_INNER_PHASE1 = """\
         SELECT r.id AS repo_id, r.stars,
                {coverage_expr} AS coverage
@@ -392,51 +392,101 @@ _FTS_INNER_PHASE1 = """\
           AND ($13::bool = FALSE OR r.is_archived = FALSE)"""
 
 _FTS_INNER_PHASE2 = """\
-        SELECT r.id AS repo_id, r.stars,
-               {coverage_expr} AS coverage
-        FROM repositories r
-        LEFT JOIN enrich_cov ec ON ec.repo_id = r.id
-        WHERE (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
-          AND ($10::text   IS NULL OR r.primary_language = $10)
-          AND ($11::text[] IS NULL OR r.topics && $11::text[])
-          AND ($12::int    IS NULL OR r.stars >= $12)
-          AND ($13::bool = FALSE OR r.is_archived = FALSE)
+        SELECT f.repo_id, f.stars,
+               {coverage_arm1} AS coverage
+        FROM fts_own f
+        LEFT JOIN enrich_cov ec ON ec.repo_id = f.repo_id
         UNION ALL
         SELECT r.id AS repo_id, r.stars,
-               {coverage_expr} AS coverage
-        FROM enrich_cov ec
+               {coverage_arm2} AS coverage
+        FROM enrich_strict ec
         JOIN repositories r ON r.id = ec.repo_id
-        WHERE ec.is_member
-          AND NOT (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
+        WHERE NOT (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)
           AND ($10::text   IS NULL OR r.primary_language = $10)
           AND ($11::text[] IS NULL OR r.topics && $11::text[])
           AND ($12::int    IS NULL OR r.stars >= $12)
           AND ($13::bool = FALSE OR r.is_archived = FALSE)"""
 
-# Phase 2's extra CTE: per-repo enrichment term flags. One GIN probe
-# selects enrichment rows sharing at least ONE query lexeme ($32);
-# bool_or folds them into per-slot booleans (cheaper than concatenating
-# tsvectors — no detoast/merge, hash-aggregatable) plus is_member: did
-# any single row meet the same pairwise bar ($7) the light fields face.
-# Cross-source coverage combines through bool_or; cross-source pairwise
-# membership does not (rows are probed individually) — a repo whose two
-# enrichment rows each carry ONE different query term misses the
-# enrichment-only arm; accepted, the LLM rows carry 5-8 queries each.
-# Empty enrichment table -> empty CTE -> the LEFT JOIN yields NULLs,
-# arm two yields nothing, and the lane is exactly phase 1.
+# Phase 2's extra CTEs: per-repo enrichment term flags, read from the
+# compact repository_enrichment_terms table (sql/0011) and bounded on
+# both consumers. The original single CTE anchored on one GIN probe
+# for ANY query lexeme ($32) over the source table; at awesome-mined
+# scale (56K thin rows) that stayed cheap, but the full-corpus LLM
+# pass made it 300K TOASTed-kilobyte rows and a common-word query
+# ("python") heap-fetched tens of thousands of them — minutes of IO on
+# small compute, measured 34s warm for the four-term gate query. What
+# each consumer actually needs is narrow:
+#
+#   * arm one only ever reads flags for repos its OWN fields already
+#     matched, so enrich_cov joins the materialized fts_own candidate
+#     set (PK nested loop against inline-small term rows);
+#   * arm two only admits repos whose enrichment covers the FULL query
+#     ($6, websearch AND — measured: the pairwise bar $7 admits 40K
+#     "members" from LLM text, where common word pairs are everywhere,
+#     and the planner answers with a seq scan of repositories). The
+#     Doc2Query premise argues for the whole-query bar anyway:
+#     generated queries mirror complete user queries, so an
+#     enrichment-only repo is exactly one whose enrichment contains
+#     the query wholesale. The GIN intersection finds those few ids
+#     selectively.
+#
+# The terms table folds a repo's rows into one lexeme-union tsvector,
+# so per-slot flags are plain @@ tests (no aggregate); membership uses
+# union-across-sources semantics (sql/0011 records the hair of extra
+# width vs the old per-row bar). Missing terms rows (empty enrichment)
+# -> empty CTEs -> the LEFT JOIN yields NULLs, arm two yields nothing,
+# and the lane is exactly phase 1. params_anchor keeps $32 in the
+# statement's inferred parameter list (same trick as phase 1's anchor)
+# now that no live probe uses it.
 def _phase2_ctes() -> str:
     flag_lines = ",\n".join(
-        f"           bool_or(search_tsv @@ ${n}) AS c{i}"
+        f"           (en.terms @@ ${n}) AS c{i}"
         for i, n in enumerate(range(23, 23 + FTS_COVERAGE_SLOTS), start=1)
     )
+    own_bits = ",\n".join(
+        f"           (r.search_tsv_light @@ ${n}) AS o{i}"
+        for i, n in enumerate(range(23, 23 + FTS_COVERAGE_SLOTS), start=1)
+    )
+    own_sum = " + ".join(
+        f"(r.search_tsv_light @@ ${n})::int"
+        for n in range(23, 23 + FTS_COVERAGE_SLOTS)
+    )
     return (
+        "params_anchor AS (\n"
+        "    SELECT $32::text AS q_any\n"
+        "),\n"
+        # The ORDER BY/LIMIT is a dominance bound: enrichment can raise
+        # coverage by at most one (the LEAST(1, ...) cap), so ordering
+        # by own-coverage+1 majorises every candidate's best possible
+        # sort key, and only the top 2x lane-limit under that ordering
+        # can reach the lane's top lane-limit. Flags then get computed
+        # for hundreds of repos, not every FTS match (measured 12K for
+        # a four-term query). A boundary-tier repo squeezed out by the
+        # 2x slack would have entered the lane in its last ranks, where
+        # RRF contribution is negligible; the dense lane still sees it.
+        "fts_own AS MATERIALIZED (\n"
+        "    SELECT r.id AS repo_id, r.stars,\n"
+        f"{own_bits}\n"
+        "    FROM repositories r\n"
+        "    WHERE (r.search_tsv_light @@ $7 OR r.search_tsv @@ $6)\n"
+        "      AND ($10::text   IS NULL OR r.primary_language = $10)\n"
+        "      AND ($11::text[] IS NULL OR r.topics && $11::text[])\n"
+        "      AND ($12::int    IS NULL OR r.stars >= $12)\n"
+        "      AND ($13::bool = FALSE OR r.is_archived = FALSE)\n"
+        f"    ORDER BY ({own_sum}) DESC, r.stars DESC\n"
+        "    LIMIT $3::int * 2\n"
+        "),\n"
         "enrich_cov AS (\n"
-        "    SELECT repo_id,\n"
-        f"{flag_lines},\n"
-        "           bool_or(search_tsv @@ $7)  AS is_member\n"
-        "    FROM repository_enrichment\n"
-        "    WHERE search_tsv @@ $32::tsquery\n"
-        "    GROUP BY repo_id\n"
+        "    SELECT en.repo_id,\n"
+        f"{flag_lines}\n"
+        "    FROM repository_enrichment_terms en\n"
+        "    JOIN fts_own f ON f.repo_id = en.repo_id\n"
+        "),\n"
+        "enrich_strict AS (\n"
+        "    SELECT en.repo_id,\n"
+        f"{flag_lines}\n"
+        "    FROM repository_enrichment_terms en\n"
+        "    WHERE en.terms @@ $6\n"
         "),\n"
     )
 
@@ -505,6 +555,27 @@ def _coverage_expr(with_enrichment: bool) -> str:
     )
 
 
+def _coverage_expr_bits() -> str:
+    """Arm one's coverage over fts_own's precomputed o1..oN bits.
+
+    Same arithmetic as :func:`_coverage_expr` with enrichment, but the
+    own-field probes were already evaluated inside the materialized
+    candidate scan, so this reads booleans instead of re-running
+    ``@@`` per output row.
+    """
+    idx = range(1, FTS_COVERAGE_SLOTS + 1)
+    own = [f"(f.o{i})::int" for i in idx]
+    extra = [
+        f"(COALESCE(ec.c{i}, FALSE) AND NOT f.o{i})::int" for i in idx
+    ]
+    return (
+        ("\n             + ").join(own)
+        + "\n             + LEAST(1, "
+        + ("\n                        + ").join(extra)
+        + ")"
+    )
+
+
 def _build_search_sql(phase2: bool) -> str:
     """Render the search statement for one PHASE2_RETRIEVAL setting.
 
@@ -525,7 +596,8 @@ def _build_search_sql(phase2: bool) -> str:
             ),
             coverage_doc=" or enrichment",
             fts_inner=_FTS_INNER_PHASE2.format(
-                coverage_expr=_coverage_expr(True)
+                coverage_arm1=_coverage_expr_bits(),
+                coverage_arm2=_coverage_expr(True),
             ),
             name_norm_score_arm=_NAME_NORM_SCORE_ARM,
             name_norm_where_arm=_NAME_NORM_WHERE_ARM,
@@ -689,6 +761,12 @@ async def search(
             # search_path are ignored).
             gucs = [
                 "SET LOCAL search_path = public, extensions",
+                # Generic plans can't fold the disabled name-lane arms
+                # ('' fuzzy query, NULL normalised name) or use the
+                # LIKE prefix, so they answer the OR chain with a 2s+
+                # parallel seq scan of repositories — on every query.
+                # Custom plans see the actual values; planning is ~8ms.
+                "SET LOCAL plan_cache_mode = force_custom_plan",
                 f"SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}",
                 f"SET LOCAL pg_trgm.similarity_threshold = "
                 f"{TRGM_SIMILARITY_THRESHOLD}",
