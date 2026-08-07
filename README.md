@@ -19,7 +19,7 @@ step-by-step guide to actually using that repo.
 The corpus is ~267,000 repositories crawled, ~244,000 fully indexed with
 embeddings. A query whose vocabulary the database has cached returns in
 ~120 ms server-side; a genuinely novel one takes 1–3 s, because the
-enrichment index is larger than the free-tier instance's cache. Both
+curation index is larger than the database instance's cache. Both
 services also scale to zero when idle, so the first request after a long
 quiet spell waits about a minute while they wake — a keep-warm ping every
 10 minutes makes that rare.
@@ -45,8 +45,8 @@ ranking signal (relevance / popularity / recency) counts.
 
 ## What it is
 
-A small but complete, production-shaped system. Four parts share one
-Postgres + pgvector database:
+A small but complete, production-shaped system in four parts, built around
+one Postgres + pgvector database:
 
 - **[`crawler/`](crawler/)** — fetches repository metadata from GitHub (GraphQL)
   and READMEs (REST) into Postgres. After a one-time full crawl, it refreshes
@@ -103,12 +103,17 @@ its own.
 **Retrieval and ranking.** Candidates come from three lanes in one SQL
 statement — full-text over name/topics/description/README, dense vectors
 (pgvector HNSW), and fuzzy name matching for typos — fused by Reciprocal Rank
-Fusion. The final order blends three normalised signals: fused relevance, a
-*saturating* star count (popularity boosts, but can never drown relevance),
-and recency with a floor (finished classics don't sink). Typing a repo's exact
-name puts that repo first, always. The search API returns each result's
-per-signal contribution, so the UI can show *why* something ranked where it
-did.
+Fusion. The full-text lane also draws on *curation*: category labels and
+descriptions mined from the awesome-lists that link a repo, which can supply
+the one word its own metadata never says ("framework" for pytorch) but are
+capped so they can never carry a match alone. The final order blends
+normalised signals: fused relevance, a *saturating* star count (popularity
+boosts, but can never drown relevance), and recency with a floor (finished
+classics don't sink). A fourth signal — how many published packages depend on
+the repo — is wired through the same blend at weight zero, dark until the eval
+says it earns a place. Typing a repo's exact name puts that repo first,
+always. The search API returns each result's per-signal contribution, so the
+UI can show *why* something ranked where it did.
 
 **Usage guides.** Clicking a result asks the search service for a short,
 standard step-by-step guide (what it is → prerequisites → install → run →
@@ -125,14 +130,14 @@ cp .env.example .env
 
 # 2. Start Postgres, the embedding service, and the search service.
 make up
-make migrate
+make migrate-compose   # or 'make migrate' if you have psql on the host
 
 # 3. Populate the corpus (batch jobs, run from the host).
 python3 -m venv .venv && source .venv/bin/activate
 make install
 make crawl          # metadata:  ~25 min for ~267K repos
 make readmes        # READMEs:    top 20K in ~4 hr (rate-limited)
-make index          # embeddings: ~8 hr for the indexed set
+make index          # embeddings: the 20K above, ~20 min
 make build-hnsw     # one-time, after indexing finishes
 make build-hnsw-halfvec  # the half-precision index the search service queries
 
@@ -145,9 +150,24 @@ curl -s localhost:8002/search \
 make eval
 ```
 
-See [`make help`](Makefile) for all tasks. Prefer not to use Docker? The
-[full setup](#running-without-docker) works against any Postgres 16 with
-pgvector (the Supabase free tier is fine).
+That builds a demo-sized corpus. `make readmes` and `make index` each take
+up to 20K repos per run and are resumable — to go further, re-run each until
+it reports nothing pending. The full ~244K set took 13 indexing runs, about
+four hours. Two further passes build the curation and dependency signals
+the deployed service ranks with, and need no credentials beyond the GitHub
+token you already have:
+
+```bash
+make mine-awesome   # category labels from the awesome-lists that link each repo
+make signals        # dependent counts and scorecards from deps.dev
+```
+
+See [`make help`](Makefile) for all tasks, and
+[ADR 0020](docs/decisions/0020-index-time-enrichment.md) for how curated
+documents are embedded under their own label so the two generations can be
+compared before either serves. Prefer not to use Docker? The
+[full setup](#running-without-docker) works against any Postgres 14+ with
+pgvector (the Supabase free tier is fine); the Compose stack pins 16.
 
 ## Where it runs
 
@@ -159,7 +179,12 @@ Serving runs on free tiers everywhere except the database:
 | Embedding service       | Google Cloud Run               | Scales to zero between requests                      |
 | Search service          | Google Cloud Run               | Same; a 10-min scheduler ping keeps both warm        |
 | Frontend                | GitHub Pages                   | Static; deploys via GitHub Actions                   |
-| Weekly corpus refresh   | GitHub Actions                 | Incrementally refreshes new and changed repos        |
+| Corpus refresh          | GitHub Actions                 | Weekly incremental pass; monthly full re-baseline    |
+
+The refresh is a chain of three workflows — metadata, then READMEs, then
+embeddings — each chunked to fit inside a job's time limit and re-triggering
+itself until its stage is drained
+([ADR 0014](docs/decisions/0014-chunked-actions-refresh.md)).
 
 Running cost is about **$30/month**, effectively all of it the managed
 Postgres — Cloud Run, GitHub Pages, and Cloud Scheduler stay inside their
@@ -186,9 +211,10 @@ make test
 ```
 
 The unit tests focus on the parts where bugs are subtle and silent: the
-crawler's shard-boundary math and rate limiter, the indexer's document
-construction and worker deadlines, and the search service's scoring. The
-[eval harness](search/eval/) covers end-to-end search quality.
+crawler's shard-boundary math, rate limiter, and awesome-list parser, the
+indexer's document construction and worker deadlines, and the search
+service's scoring. The [eval harness](search/eval/) covers end-to-end
+search quality.
 
 ## Project layout
 
@@ -201,8 +227,9 @@ gitsearch/
 │
 ├── .github/workflows/     ← frontend deploy + corpus refresh
 ├── docs/decisions/        ← Architecture Decision Records
+├── docs/backlog.md        ← designed but parked, with activation conditions
 ├── sql/                   ← migrations, applied in numeric order
-├── scripts/               ← operational scripts (progress, regression checks)
+├── scripts/               ← operational scripts (audit, progress, regression)
 │
 ├── crawler/               ← GitHub metadata + README crawler
 ├── indexer/               ← embedding service + indexing pipeline
@@ -217,11 +244,12 @@ variables, internal architecture, and known limitations.
 
 These are real, deliberate boundaries, not oversights:
 
-- **Curated corpus, not all of GitHub.** The corpus is everything above a star
-  threshold (~267K repos), kept continuously fresh. Indexing every public
-  repository (hundreds of millions) isn't feasible on free-tier infrastructure,
-  and GitHub's search API can't even enumerate them — so the project tracks the
-  active, popular slice and keeps it current rather than chasing completeness.
+- **Curated corpus, not all of GitHub.** The floor is 200 stars — about 280K
+  repositories on GitHub today, ~267K of them crawled — kept continuously
+  fresh. Indexing every public repository (hundreds of millions) isn't
+  feasible on free-tier infrastructure, and GitHub's search API can't even
+  enumerate them — so the project tracks the active, popular slice and keeps
+  it current rather than chasing completeness.
 - **Single instance.** One crawler token, one embedding process, one search
   replica. Horizontal scaling is straightforward but unnecessary at this size.
 - **Coverage-based lexical scoring, not BM25.** Postgres full-text search has
@@ -232,7 +260,7 @@ These are real, deliberate boundaries, not oversights:
 ## Running without Docker
 
 ```bash
-# Bring your own Postgres 16 with pgvector (Supabase free tier works).
+# Bring your own Postgres 14+ with pgvector (Supabase free tier works).
 export DATABASE_URL=postgresql://...
 export GITHUB_TOKEN=ghp_...
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, for usage guides
@@ -242,8 +270,8 @@ make install
 make migrate
 make serve-embed &        # background
 make crawl
-make readmes
-make index
+make readmes              # re-run until nothing pending
+make index                # re-run until nothing pending
 make build-hnsw
 make build-hnsw-halfvec
 make serve-search &
