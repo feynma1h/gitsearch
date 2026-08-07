@@ -97,8 +97,8 @@ re-verifying them against the deployed API.
   the obvious alternative, but a placeholder is an implicit
   recommendation, and that phrasing family returns poor results.
 - **The status line reports client-measured elapsed time.** Server
-  `took_ms` is around 130 ms, which renders as "0.1s" and says
-  nothing about the wait the reader actually sat through.
+  `took_ms` is ~120 ms on a warm cache, which renders as "0.1s" and
+  says nothing about the wait the reader actually sat through.
 
 ## What it deliberately doesn't do
 

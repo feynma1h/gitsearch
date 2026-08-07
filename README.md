@@ -5,9 +5,10 @@
 [Live demo →](https://feynma1h.github.io/gitsearch/)
 
 ```
-"fast http server in rust"       →   tokio-rs/axum, actix/actix-web, hyperium/hyper
-"kubernetes package manager"     →   helm/helm
-"vector database for embeddings" →   qdrant/qdrant, weaviate/weaviate, pgvector/pgvector
+"download videos from youtube"        →   ytdl-org/youtube-dl, yt-dlp/yt-dlp
+"remove the background from an image" →   nadermx/backgroundremover, danielgatis/rembg
+"kubernetes package manager"          →   helm/helm, zarf-dev/zarf
+"fast http server in rust"            →   seanmonstar/warp, TheWaWaR/simple-http-server
 ```
 
 Type a plain-English description of what you want, and get back GitHub
@@ -16,10 +17,12 @@ popularity, and recency. Click any result for a short, generated
 step-by-step guide to actually using that repo.
 
 The corpus is ~267,000 repositories crawled, ~244,000 fully indexed with
-embeddings. Warm queries return in ~130 ms server-side. The services
-scale to zero when idle, so a first request after a long quiet spell
-waits about a minute while they wake — a keep-warm ping every 10 minutes
-makes that rare.
+embeddings. A query whose vocabulary the database has cached returns in
+~120 ms server-side; a genuinely novel one takes 1–3 s, because the
+enrichment index is larger than the free-tier instance's cache. Both
+services also scale to zero when idle, so the first request after a long
+quiet spell waits about a minute while they wake — a keep-warm ping every
+10 minutes makes that rare.
 
 ---
 
