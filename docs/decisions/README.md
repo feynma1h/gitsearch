@@ -64,5 +64,8 @@ between an ADR and a commit message.
 The indexer block (0005–0011) reads as a connected arc: *where the
 model lives* → *where its output goes* → *what model produces it* →
 *what text we feed the model* → *how we talk to it* → *how we batch
-calls* → *how we index the result*. The search block (0012–0013)
-builds on top.
+calls* → *how we index the result*. The search block builds on top:
+0012–0013 stand up the service and its first scoring formula,
+0016–0017 add the usage guides, and 0018 and 0020 rebuild retrieval
+and enrich the index. 0014–0015 cover corpus freshness, 0019 the
+frontend's cold-start behaviour.

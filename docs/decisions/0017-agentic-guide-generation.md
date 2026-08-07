@@ -77,7 +77,8 @@ Per first-click generation (cached forever after):
 - **Tokens:** conversation history grows across rounds; worst case
   (`8 rounds × ~20K-char files`) is roughly 60–80K cumulative input
   tokens ≈ **$0.07**, typical runs (2–4 reads) a few cents. README-only
-  was ~$0.0065 — an order of magnitude more, on a per-click-once cost.
+  was ~$0.0065, so the agentic path costs an order of magnitude more on
+  a per-click-once basis.
 - **Latency:** ~10–20s worst case vs ~3–5s before. Acceptable because the
   frontend shows a loading state on first open and every later view is a
   cache hit.

@@ -3,10 +3,10 @@
 **Status:** accepted
 **Date:** 2026-05-03
 
-> **Note (2026-05):** GitHub's population above 200 stars has since grown to
-> ~280K repos — exactly the growth this ADR's *What would change this decision*
-> section anticipated. The 200 floor is retained (the corpus stays tractable at
-> ~280K, and only a curated ~20K are embedded), so the figures below reflect the
+> **Note (updated 2026-08):** GitHub's population above 200 stars has since
+> grown to ~280K repos — exactly the growth this ADR's *What would change this
+> decision* section anticipated. The 200 floor is retained (~267K of those
+> repos are crawled and ~244K are embedded), so the figures below reflect the
 > original ~100K-era estimate rather than the current count.
 
 ## Context

@@ -74,7 +74,7 @@ search and re-time the stages; this file records how.
   hitting `/search` every ~10 min, ~$0). Keeps both Cloud Run
   instances *and* the Postgres caches hot, eliminating the cold path
   for nearly all visitors. Deferred for the same sign-off reason:
-  this repo's scheduled automation was deliberately disabled
+  this repo's scheduled workflows are committed but disabled
   (2026-07-29), and a pinger is standing automation plus synthetic
   traffic.
 - **Lazy-import refactor.** Measured no-op — see Context.
@@ -138,8 +138,8 @@ outlasts the 90s server request cap, so a ping that lands on a
 recycled instance completes the wake instead of timing out. Pinger
 traffic is identifiable in request logs by its
 `Google-Cloud-Scheduler` user agent. This is Cloud Scheduler, not
-GitHub Actions — the repo's Actions crons remain deliberately
-disabled.
+GitHub Actions, so the wake-up ping stays independent of the
+corpus-refresh workflows.
 
 First forced ping verified: HTTP 200. The narration keeps its 60–65s
 timing as the safety net for what the pinger cannot prevent — platform

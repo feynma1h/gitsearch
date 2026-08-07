@@ -21,11 +21,12 @@ can verify our metric math against trec_eval's.)
 | --- | --- |
 | `queries.json` | 5 legacy seeds with inline `relevant` labels. Unchanged, still the `make eval` default. |
 | `queries_v2.json` | 200 queries, stratified: 50 navigational (incl. typos), 75 category, 75 task. No labels inline. |
-| `canary.json` | 50 category queries with hand-picked canonical answers, every repo verified present in the corpus. Judge-independent ground truth; frozen (append-only) after the 2026-08-05 veto pass. |
+| `canary.json` | 50 category queries with hand-picked canonical answers, every repo verified present in the corpus. Judge-independent ground truth; frozen (append-only) after the 2026-08-05 hand-review pass. |
 | `qrels.json` | Graded (0–3) relevance judgments, pooled from every compared system's top-20, produced by `judge.py`. Append-only. |
 | `run.py` | Runs a query set against a service; saves ranked lists as a *run file*; computes whichever metrics its inputs allow. |
-| `history/` | Frozen run files that a shipped decision was gated on (`runs/` itself is gitignored scratch). |
+| `history/` | Frozen run files that a shipped decision was gated on, plus the spot-judge agreement report (a `{summary, rows}` file, not a run file). `runs/` itself is gitignored scratch. |
 | `judge.py` | UMBRELA LLM judge (Gemini by default) over pooled run files → `qrels.json`. |
+| `spot_judge.py` | Second-family re-grade: `claude-haiku-4-5` re-judges a seeded sample of a run's top-10 pairs under the same UMBRELA prompt, reporting exact/binary agreement, Cohen's kappa and mean grade bias. Tests the primary judge for same-family bias — see ADR 0020. |
 | `compare.py` | A/B between two run files: ΔnDCG@10 with a Fisher randomization p-value, recall, canary recall, judged@10, and the ship gate. |
 | `metrics.py` | The metric definitions (graded nDCG, recall@k grade≥2, judged@k, canary recall, significance test). |
 

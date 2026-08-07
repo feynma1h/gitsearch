@@ -3,6 +3,13 @@
 **Status:** accepted
 **Date:** 2026-05-10
 
+> **Note (updated 2026-08):** the ~16-hour estimate for the README pass below
+> is too low. At the measured 5000 requests/hour ceiling, a full pass over the
+> ~267K-repo corpus is closer to ~55 hours, so anything sized off the 16-hour
+> figure under-provisions by roughly 8 chunks. The chunking decision itself is
+> unaffected — it only gets more necessary. See [the backlog](../backlog.md)
+> for the conditional-refresh work that supersedes a full pass.
+
 ## Context
 
 The corpus needs periodic refresh: a metadata re-crawl picks up new repos

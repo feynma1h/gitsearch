@@ -24,7 +24,7 @@ heading ("Frameworks", "Vector Database"). That is anchor-text-analog
 data, the signal web search has always leaned on, available for the
 cost of parsing markdown.
 
-Three user-mandated reversibility constraints shaped everything:
+Three non-negotiable reversibility constraints shaped everything:
 enrichment lives in its own table and one migration removes it;
 enriched embeddings sit under a versioned label beside the originals
 and serving flips by config; absent enrichment degrades to exactly
@@ -156,7 +156,7 @@ within cosine ≥ 0.45 of their source document (the consistency filter
 that made Doc2Query-- beat unfiltered expansion). Submission requires
 an explicit `--i-approve-the-cost` flag after a printed estimate.
 
-Provider economics decided the run (user-approved 2026-08-06): Gemini
+Provider economics decided the run (approved 2026-08-06): Gemini
 flash-lite batch versus a multiple-of-cost premium on Haiku 4.5 whose
 only purchase is keeping the generator outside the eval judge's model
 family. The Gemini path was approved **with the family conflict
@@ -179,12 +179,13 @@ response files: **$66.45** (227.6M tokens in / 50.7M out over
 244,396 requests — per-repo ~931 in / 207 out, thinking pinned to
 zero and verified zero in usage metadata; all requests succeeded,
 244,388 rows collected, 8 dropped client-side as unparseable). The
-user re-approved completion at the corrected figure mid-run. Two quota mechanics also
-shaped the run and are worth a future reader's minute: Tier-1
-flash-lite batch allows only 10M enqueued tokens (jobs above ~9K
-requests are unlaunchable — the drain runs sequential 8K chunks),
-and prepaid-credit depletion doesn't fail queued batch jobs, it
-silently parks them until topped up.
+run was carried to completion at the corrected figure rather than
+aborted mid-drain. Two quota mechanics also shaped the run and are
+worth a future reader's minute: Tier-1 flash-lite batch allows only
+10M enqueued tokens (jobs above ~9K requests are unlaunchable — the
+drain runs sequential 8K chunks), and prepaid-credit depletion
+doesn't fail queued batch jobs, it silently parks them until topped
+up.
 
 ## Alternatives considered
 
@@ -276,9 +277,9 @@ Readings, recorded plainly:
   concentrate where mined category vocabulary pulls popular adjacent
   repos above niche-precise ones ("self-hosted X" queries); the
   coverage cap halved that effect but did not eliminate it.
-  Per-repo generated vocabulary (the LLM variant, unrun) is the
-  designed precision fix and remains gated on its own measured
-  marginal value.
+  Per-repo generated vocabulary (the LLM variant, since run and graded
+  in Eval C below) is the designed precision fix; its measured
+  marginal value is recorded there.
 - **The criticality term did not earn its weight**: w_crit = 0.2 on
   the enriched configuration measured −0.005 nDCG / +0.010 canary
   against the same configuration without it — noise-level, slightly
@@ -372,11 +373,11 @@ dense lane precisely because it has no analogue of the FTS lane's
 wrote the enrichment text, judged-nDCG-up/canary-down is exactly the
 shape same-family bias would take, and the flip should not ship on
 the biased-side metric. The planned 300-pair Anthropic spot-judge
-(`eval/spot_judge.py`, committed) needs an ANTHROPIC_API_KEY the
-environment lacks; run it before ever revisiting the flip. The
-enrich-v2 vectors and index stay banked under their label — a future
-increment that down-weights enrichment text in document construction
-(or caps its share of short docs) is the recorded mitigation path.
+(`eval/spot_judge.py`, committed) was run to test exactly this; the
+result is the section below. The enrich-v2 vectors and index stay
+banked under their label — a future increment that down-weights
+enrichment text in document construction (or caps its share of short
+docs) is the recorded mitigation path.
 
 Deploy sequence: revert prod's PHASE2_RETRIEVAL to off (incident
 mitigation, done via env), merge and deploy the reworked SQL, turn
@@ -384,3 +385,29 @@ PHASE2_RETRIEVAL back on with EMBEDDINGS_MODEL_LABEL still
 enrich-v1, and verify latency on a quiet database — local latency
 measurements during the incident were contaminated by production's
 own degraded statements sharing the Micro instance.
+
+### Second-family spot-judge (2026-08-07, evening)
+
+The planned 300-pair re-grade ran with claude-haiku-4-5 over the
+frozen v2-candidate run (seed 20260807, sampled from the 2,000-pair
+judged top-10 pool; frozen at
+`eval/history/2026-08-07-spot-judge-haiku-v2-top10.json`). Agreement
+with the Gemini qrels: 71% exact on the 0-3 scale, 92% binarised at
+grade>=2, Cohen's kappa 0.712 — substantial cross-family agreement —
+and mean grade bias (gemini minus haiku) of −0.20: Gemini graded
+these pairs *lower* than the second-family judge, the opposite sign
+of same-family inflation. The decisive cut: pairs unique to the v2
+top-10 (n=68, where enrichment vocabulary would concentrate any
+sibling preference) show bias −0.21 and binary agreement 0.94,
+indistinguishable from pairs shared with the control top-10 (n=232,
+bias −0.20, agreement 0.91). No differential bias, and a uniform
+conservative shift cancels in any A/B on these qrels.
+
+The same-family caveat is therefore retired: the +0.013 judged
+increment for the v2 vectors is a real relevance gain, not a judge
+artifact. The label-flip decline stands on the merits alone — the
+increment is genuinely below the +0.03 bar, and the canary
+regression is a genuine navigational cost. The recorded mitigation
+path (down-weight enrichment text in document construction, or cap
+its share of short docs) is unchanged and remains the prerequisite
+for any future revisit.

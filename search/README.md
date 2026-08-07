@@ -29,7 +29,7 @@ at request time.
               │ embedding svc   │            │ Postgres (one statement) │
               │ POST /embed     │            │  ├─ full-text lane       │
               │ (1-text batch)  │            │  ├─ dense (halfvec HNSW) │
-              └────────┬────────┘            │  └─ name (pg_trgm)      │
+              └────────┬────────┘            │  └─ name (pg_trgm)       │
                        │                     └──────────┬───────────────┘
                        └────────────┬───────────────────┘
                                     ▼
@@ -121,7 +121,7 @@ POST /search   {
                    "full_text_weight": 1.0,       # RRF lane weights + k —
                    "semantic_weight":  1.0,       # exposed for eval sweeps;
                    "name_weight":      0.5,       # normal clients omit them
-                   "rrf_k":            50
+                   "rrf_k":            20
                  }
                }
                → { "hits":  [...], "model": "...", "took_ms": N }
@@ -210,11 +210,15 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Tests focus on `ranking.py` (the fusion/blend math) and
-`eval/metrics.py` (the numbers phase gates are decided on — including a
-parity check against ir_measures/trec_eval where installed). The SQL is
-left to integration tests against a live Postgres; that's not in the
-unit-test set.
+Tests cover `ranking.py` (the fusion/blend math), `eval/metrics.py`
+(the numbers phase gates are decided on — including a parity check
+against ir_measures/trec_eval where installed), the pure helpers and
+both SQL variants built in `db.py` (parameter binding, the enrichment
+cap, phase-flag behaviour), and the guide path — prompt assembly, the
+agentic tool loop, and the repo browser's output bounds — against a
+mocked Anthropic client. Executing the retrieval SQL against real data
+is left to integration testing against a live Postgres; that's not in
+the unit-test set.
 
 ## Evaluation
 
@@ -235,6 +239,7 @@ ADRs, continuing the project's contiguous numbering:
 - [ADR 0016 — LLM-generated repository usage guides](../docs/decisions/0016-llm-usage-guide.md)
 - [ADR 0017 — Agentic full-repo exploration for usage guides](../docs/decisions/0017-agentic-guide-generation.md)
 - [ADR 0018 — Three-lane hybrid retrieval with RRF fusion and an additive popularity blend](../docs/decisions/0018-three-lane-hybrid-retrieval.md)
+- [ADR 0020 — Index-time enrichment: mined curation, versioned embeddings, and a dark criticality signal](../docs/decisions/0020-index-time-enrichment.md)
 
 The most consequential files for ranking quality are
 [`service/ranking.py`](service/ranking.py) (the canonical formula) and

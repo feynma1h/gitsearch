@@ -4,7 +4,7 @@ Async crawler that fetches GitHub repository metadata via the GraphQL Search
 API and persists it to Postgres. Designed as the ingestion layer for a
 larger semantic-search project.
 
-Crawls roughly **280K repositories in ~25 minutes** on a single GitHub token,
+Crawls roughly **267K repositories in ~25 minutes** on a single GitHub token,
 limited primarily by the 5000 points/hour GraphQL budget.
 
 ## How it works
@@ -83,7 +83,7 @@ pip install -r requirements.txt
 cp ../.env.example ../.env
 # Fill in GITHUB_TOKEN and DATABASE_URL.
 
-# 4. Run the metadata crawl (~25 minutes for 280K repos).
+# 4. Run the metadata crawl (~25 minutes for ~267K repos).
 set -a; source .env; set +a
 python -m src.main
 
@@ -122,7 +122,7 @@ python -m src.readme_pass [--workers N] [--top-n N] [--deadline-seconds N] [--lo
 | `--log-level`         | INFO    | DEBUG / INFO / WARNING / ERROR                    |
 
 A single token can fetch ~5000 READMEs/hour, so the top 20K takes ~4 hours and
-the full ~280K corpus takes ~16 hours. Crashes are safe — restart picks up where
+the full ~267K corpus takes ~55 hours. Crashes are safe — restart picks up where
 it left off.
 
 ## Schema
@@ -158,7 +158,7 @@ one rather than rewriting it.
 ## Known limitations
 
 - **Single-token only.** Multi-token rotation would let us push past the
-  5000 points/hour ceiling, but isn't needed for the ~280K-repo metadata
+  5000 points/hour ceiling, but isn't needed for the ~267K-repo metadata
   crawl. The README pass is more rate-limit-bound — full README coverage of
   the whole corpus would benefit from rotation.
 - **No resume for the metadata crawl.** A crash mid-crawl re-processes

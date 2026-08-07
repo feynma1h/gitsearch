@@ -1,0 +1,1812 @@
+{
+ "summary": {
+  "n": 300,
+  "skipped": 0,
+  "exact_agreement": 0.71,
+  "binary_agreement_rel2": 0.92,
+  "kappa_rel2": 0.712,
+  "mean_grade_bias_gemini_minus_haiku": -0.203
+ },
+ "rows": [
+  {
+   "query": "hugo",
+   "repo": "nanxiaobei/hugo-paper",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "terminal multiplexer",
+   "repo": "greymd/tmux-xpanes",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted survey forms",
+   "repo": "n8n-io/n8n",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "catch emails sent by my app in development",
+   "repo": "ChangemakerStudios/Papercut-SMTP",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "run llm inference locally",
+   "repo": "Andyyyy64/whichllm",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "workflow automation platform",
+   "repo": "automatisch/automatisch",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "tailwind css",
+   "repo": "vadimdemedes/tailwind-rn",
+   "gemini": 3,
+   "haiku": 2
+  },
+  {
+   "query": "javascript bundler",
+   "repo": "rollup/rollup",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "api testing client",
+   "repo": "hoppscotch/hoppscotch",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "natural sounding text to speech",
+   "repo": "2noise/ChatTTS",
+   "gemini": 3,
+   "haiku": 2
+  },
+  {
+   "query": "collaborative whiteboard",
+   "repo": "nextcloud/whiteboard",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "container orchestration",
+   "repo": "kubernetes/kubernetes",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "ocr engine",
+   "repo": "tesseract-ocr/tesseract",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "run llm inference locally",
+   "repo": "mlc-ai/web-llm",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "manage multiple versions of node",
+   "repo": "nvm-sh/nvm",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "polars",
+   "repo": "pola-rs/geopolars",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "help desk ticketing system",
+   "repo": "polonel/trudesk",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "supabase",
+   "repo": "supabase/supabase-js",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "fuzzy find files in the terminal",
+   "repo": "kien/ctrlp.vim",
+   "gemini": 3,
+   "haiku": 1
+  },
+  {
+   "query": "container vulnerability scanner",
+   "repo": "aquasecurity/trivy",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "database gui client",
+   "repo": "sqlectron/sqlectron",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted project management",
+   "repo": "BaldissaraMatheus/Tasks.md",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "tailwind css",
+   "repo": "creativetimofficial/material-tailwind",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "load testing tool",
+   "repo": "grafana/k6",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "nextjs",
+   "repo": "frontend-testing-book/nextjs",
+   "gemini": 1,
+   "haiku": 3
+  },
+  {
+   "query": "manage dotfiles across machines",
+   "repo": "twpayne/chezmoi",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "compress and optimize images",
+   "repo": "joye61/pic-smaller",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "load testing tool",
+   "repo": "tsenart/vegeta",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "container vulnerability scanner",
+   "repo": "HarborGuard/HarborGuard",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "start a blog",
+   "repo": "YYsuni/2025-blog-public",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vite",
+   "repo": "passerecho/vite-",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "pocketbase",
+   "repo": "patmood/pocketbase-typegen",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "wiki for my team",
+   "repo": "A-poc/BlueTeam-Tools",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "download videos from youtube",
+   "repo": "aandrew-me/ytDownloader",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "manage multiple versions of node",
+   "repo": "ehmicky/nve",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "flashcards with spaced repetition",
+   "repo": "open-spaced-repetition/free-spaced-repetition-scheduler",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "recipe manager",
+   "repo": "sous-chefs/docker",
+   "gemini": 0,
+   "haiku": 1
+  },
+  {
+   "query": "game engine",
+   "repo": "bevyengine/bevy",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "object storage server",
+   "repo": "versity/versitygw",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "wiki for my team",
+   "repo": "hcengineering/platform",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "columnar analytics database",
+   "repo": "StarRocks/starrocks",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "tailwind css",
+   "repo": "tailwindlabs/prettier-plugin-tailwindcss",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "save articles to read later",
+   "repo": "guevara/read-it-later",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "object storage server",
+   "repo": "deuxfleurs-org/garage",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "database gui client",
+   "repo": "antares-sql/antares",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "javascript code formatter",
+   "repo": "coderaiser/putout",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "text to image generation",
+   "repo": "paarthneekhara/text-to-image",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "two factor authentication codes app",
+   "repo": "mattrubin/Authenticator",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "error tracking",
+   "repo": "bracesdev/errtrace",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "python plotting library",
+   "repo": "plotly/plotly.js",
+   "gemini": 2,
+   "haiku": 1
+  },
+  {
+   "query": "merge and split pdf files",
+   "repo": "py-pdf/pypdf",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted invoicing",
+   "repo": "vas3k/TaxHacker",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "kubernetes",
+   "repo": "linuxkit/kubernetes",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "rss reader",
+   "repo": "RSSNext/Folo",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "ollama",
+   "repo": "1Panel-dev/1Panel",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "make diagrams from text",
+   "repo": "coleam00/excalidraw-diagram-skill",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "syncthing",
+   "repo": "zocker-160/SyncThingy",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "start a blog",
+   "repo": "StartBootstrap/startbootstrap-blog-home",
+   "gemini": 1,
+   "haiku": 3
+  },
+  {
+   "query": "load testing tool",
+   "repo": "probelabs/goreplay",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "flashcards with spaced repetition",
+   "repo": "eudoxia0/hashcards",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "grafana",
+   "repo": "grafana/grafana-zabbix",
+   "gemini": 1,
+   "haiku": 3
+  },
+  {
+   "query": "api testing client",
+   "repo": "foss42/apidash",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "stream my own music collection",
+   "repo": "Chevron7Locked/kima-hub",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "prisma",
+   "repo": "mohammed-bahumaish/prisma-editor",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "password manager",
+   "repo": "gopasspw/gopass",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted web analytics",
+   "repo": "Openpanel-dev/openpanel",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "langchain",
+   "repo": "tmc/langchaingo",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "cross platform mobile framework",
+   "repo": "ionic-team/ionic-framework",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "tailwnd",
+   "repo": "RolandPheasant/TailBlazer",
+   "gemini": 0,
+   "haiku": 1
+  },
+  {
+   "query": "supabase",
+   "repo": "supabase/supabase-py",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "vpn into my home network",
+   "repo": "pivpn/pivpn",
+   "gemini": 3,
+   "haiku": 2
+  },
+  {
+   "query": "start a blog",
+   "repo": "sorrycc/blog",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "airflow",
+   "repo": "apache/airflow",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "huggingface transformers",
+   "repo": "huggingface/swift-transformers",
+   "gemini": 2,
+   "haiku": 1
+  },
+  {
+   "query": "fuzzy find files in the terminal",
+   "repo": "antonmedv/walk",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "postgress",
+   "repo": "zubkov-andrei/pg_profile",
+   "gemini": 3,
+   "haiku": 2
+  },
+  {
+   "query": "qdrant",
+   "repo": "qdrant/rust-client",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "note taking app",
+   "repo": "laurent22/joplin",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "pytorch",
+   "repo": "hughperkins/pytorch",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "expose a local server to the internet",
+   "repo": "hintjen/selfhosted-gateway",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "prisma",
+   "repo": "prisma/prisma-examples",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "duckdb",
+   "repo": "enpeizhao/duck_db",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "tensorflow",
+   "repo": "rstudio/tensorflow",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "expose a local server to the internet",
+   "repo": "amak-tech/port-buddy",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "infrastructure as code",
+   "repo": "Graphify-Labs/graphify",
+   "gemini": 0,
+   "haiku": 0
+  },
+  {
+   "query": "manage docker containers with a web ui",
+   "repo": "lirantal/dockly",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "translate text without sending it to a cloud service",
+   "repo": "ThioJoe/Auto-Synced-Translated-Dubs",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "error tracking",
+   "repo": "bugsink/bugsink",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "fastapi",
+   "repo": "zhanymkanov/fastapi-best-practices",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "natural sounding text to speech",
+   "repo": "AIGC-Audio/AudioGPT",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "check if my websites are up",
+   "repo": "sindresorhus/is-up",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "n8n",
+   "repo": "other-blowsnow/n8n-i18n-chinese",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "reverse proxy",
+   "repo": "OptimalBits/redbird",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vector database",
+   "repo": "chroma-core/chroma",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "error tracking",
+   "repo": "rollbar/rollbar.js",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "nextjs",
+   "repo": "nextjs/saas-starter",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "time tracking for freelancers",
+   "repo": "solidtime-io/solidtime",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "restore old family photos",
+   "repo": "danvk/oldnyc",
+   "gemini": 0,
+   "haiku": 0
+  },
+  {
+   "query": "expose a local server to the internet",
+   "repo": "fatedier/frp",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "rss reader",
+   "repo": "0x2E/fusion",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "rss reader",
+   "repo": "yang991178/fluent-reader",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "scan and archive paper documents",
+   "repo": "zhoubear/open-paperless",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "rust web framework",
+   "repo": "actix/actix-web",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "restore old family photos",
+   "repo": "julyx10/lap",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "flask",
+   "repo": "flask-api/flask-api",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "message queue",
+   "repo": "bee-queue/bee-queue",
+   "gemini": 3,
+   "haiku": 1
+  },
+  {
+   "query": "container vulnerability scanner",
+   "repo": "cloudflare/flan",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "detect objects in images",
+   "repo": "roboflow/supervision",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "open source backend as a service",
+   "repo": "InsForge/InsForge",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted team chat",
+   "repo": "cogentapps/chat-with-gpt",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "self-hosted survey forms",
+   "repo": "f/prompts.chat",
+   "gemini": 0,
+   "haiku": 0
+  },
+  {
+   "query": "browser automation",
+   "repo": "ChromeDevTools/chrome-devtools-mcp",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "end to end testing framework",
+   "repo": "alumnium-hq/alumnium",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "javascript testing framework",
+   "repo": "jestjs/jest",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "archive web pages permanently",
+   "repo": "Y2Z/monolith",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "flask",
+   "repo": "pallets-eco/flask-admin",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "pytorch/pytorch",
+   "repo": "prabhuomkar/pytorch-cpp",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "kubernets",
+   "repo": "kubernetes/kubernetes",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vscode",
+   "repo": "rainglow/vscode",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "tailwind css",
+   "repo": "romboHQ/tailwindcss-motion",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "nextjs",
+   "repo": "ixartz/Next-js-Boilerplate",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "make diagrams from text",
+   "repo": "ivanceras/svgbob",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "django",
+   "repo": "django-cms/django-cms",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "backup tool with deduplication",
+   "repo": "dpc/rdedup",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "mock an api for testing",
+   "repo": "wiremock/wiremock",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vector database",
+   "repo": "asg017/sqlite-vec",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "separate vocals from a song",
+   "repo": "fabiogra/moseca",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "tmux",
+   "repo": "ThomasAdam/tmux",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "polars",
+   "repo": "pola-rs/polars",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "pallets/flask",
+   "repo": "pallets-eco/flask-principal",
+   "gemini": 1,
+   "haiku": 3
+  },
+  {
+   "query": "vector database",
+   "repo": "qdrant/qdrant",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "desktop apps with web technologies",
+   "repo": "electron/electron",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "airtable alternative",
+   "repo": "ldbinac/smart_table",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "dashboard for all my self-hosted services",
+   "repo": "homarr-labs/dashboard-icons",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "go web framework",
+   "repo": "gogf/gf",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "catch emails sent by my app in development",
+   "repo": "wasp-lang/wasp",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "go web framework",
+   "repo": "gofiber/fiber",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "deploy apps on my own server like heroku",
+   "repo": "MightyMoud/sidekick",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "expose a local server to the internet",
+   "repo": "punkpeye/pipenet",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "make diagrams from text",
+   "repo": "nowthis/sankeymatic",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vpn into my home network",
+   "repo": "anywherelan/awl",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "draw architecture diagrams in the browser",
+   "repo": "Agents365-ai/drawio-skill",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "javascript runtime",
+   "repo": "colinhacks/zod",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "resize many images at once",
+   "repo": "imgproxy/imgproxy",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "self-hosted alternative to google photos",
+   "repo": "PicPeak/picpeak",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "qdrant",
+   "repo": "qdrant/qdrant-client",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted media server",
+   "repo": "mediacms-io/mediacms",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "recipe manager",
+   "repo": "YunYouJun/cook",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vite",
+   "repo": "vuejs/vitepress",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "separate vocals from a song",
+   "repo": "tsurumeso/vocal-remover",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "start a blog",
+   "repo": "calpa/gatsby-starter-calpa-blog",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "esbuild",
+   "repo": "privatenumber/esbuild-loader",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted url shortener",
+   "repo": "surishortlink/suri",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "fuzzy find files in the terminal",
+   "repo": "garybernhardt/selecta",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "uptime monitoring",
+   "repo": "alexjustesen/speedtest-tracker",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "get notified when a webpage changes",
+   "repo": "bramus/style-observer",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "pytorhc",
+   "repo": "hughperkins/pytorch",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "restore old family photos",
+   "repo": "JyChen9811/FaithDiff",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "vite",
+   "repo": "olivere/vite",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "sql queries on csv files",
+   "repo": "dcmoura/spyql",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "uptime monitoring",
+   "repo": "OneUptime/oneuptime",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "zustand",
+   "repo": "Renovamen/playground-macos",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "local kubernetes cluster for development",
+   "repo": "kubesphere/kubesphere",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "postgress",
+   "repo": "postgres/postgres",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "automate workflows between apps like zapier",
+   "repo": "dariubs/awesome-workflow-automation",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "distributed sql database",
+   "repo": "erikgrinaker/toydb",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "javascript code formatter",
+   "repo": "standard/standard",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "helm",
+   "repo": "helmfile/helmfile",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "self-hosted web analytics",
+   "repo": "mddanishyusuf/traffic-source",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "stream my own music collection",
+   "repo": "epoupon/lms",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "note taking app",
+   "repo": "heyman/heynote",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "flask",
+   "repo": "humiaozuzu/awesome-flask",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "sveltekit",
+   "repo": "vite-pwa/sveltekit",
+   "gemini": 1,
+   "haiku": 3
+  },
+  {
+   "query": "turn a jupyter notebook into a web app",
+   "repo": "marimo-team/marimo",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "distributed sql database",
+   "repo": "cockroachdb/cockroach",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "kanban board for my team",
+   "repo": "BloopAI/vibe-kanban",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "cross platform mobile framework",
+   "repo": "Snapchat/Valdi",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "pytorhc",
+   "repo": "WenmuZhou/PytorchOCR",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "status page for outages",
+   "repo": "upptime/upptime",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "react state management",
+   "repo": "pmndrs/zustand",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "go web framework",
+   "repo": "go-martini/martini",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "python plotting library",
+   "repo": "pyecharts/pyecharts",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "javascript runtime",
+   "repo": "denoland/deno",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "container vulnerability scanner",
+   "repo": "google/osv-scanner",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "self-hosted project management",
+   "repo": "Gimanh/taskview-community",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "supabase",
+   "repo": "supabase/supabase",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "ollama",
+   "repo": "PromptEngineer48/Ollama",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "send large files between devices on my network",
+   "repo": "denislupookov/altersend",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "comments widget for my blog",
+   "repo": "ArtalkJS/Artalk",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "columnar analytics database",
+   "repo": "pixelsdb/pixels",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "collaborative whiteboard",
+   "repo": "lovasoa/whitebophir",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "file synchronization",
+   "repo": "syncthing/syncthing",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "kubernetes",
+   "repo": "kelseyhightower/kubernetes-the-hard-way",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted url shortener",
+   "repo": "urlhum/UrlHum",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "end to end testing framework",
+   "repo": "kubernetes-sigs/e2e-framework",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "kanban board for my team",
+   "repo": "RARgames/4gaBoards",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "request movies and shows for my media server",
+   "repo": "seerr-team/seerr",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vector database",
+   "repo": "facebookresearch/faiss",
+   "gemini": 3,
+   "haiku": 1
+  },
+  {
+   "query": "recipe manager",
+   "repo": "julianpoy/RecipeSage",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "secrets management",
+   "repo": "Infisical/infisical",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "text to image generation",
+   "repo": "ankush-me/SynthText",
+   "gemini": 1,
+   "haiku": 0
+  },
+  {
+   "query": "pallets/flask",
+   "repo": "pallets/flask",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "track my personal finances",
+   "repo": "whisper-money/whisper-money",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "generate pdf from html",
+   "repo": "spipu/html2pdf",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "turn my markdown notes into a website",
+   "repo": "iamgio/quarkdown",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "machine learning framework python",
+   "repo": "tensorflow/tensorflow",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "comments widget for my blog",
+   "repo": "imsun/gitment",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "check if my websites are up",
+   "repo": "dgtlmoon/changedetection.io",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "help desk ticketing system",
+   "repo": "uvdesk/community-skeleton",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "python package manager",
+   "repo": "conan-io/conan",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "run llm inference locally",
+   "repo": "qualcomm/GenieX",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted invoicing",
+   "repo": "meteroid-oss/meteroid",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "facebook react",
+   "repo": "japgolly/scalajs-react",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "infrastructure as code",
+   "repo": "NousResearch/hermes-agent",
+   "gemini": 0,
+   "haiku": 0
+  },
+  {
+   "query": "lazygit",
+   "repo": "jorgerojas26/lazysql",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "file synchronization",
+   "repo": "lsyncd/lsyncd",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "scan and archive paper documents",
+   "repo": "papra-hq/papra",
+   "gemini": 2,
+   "haiku": 2
+  },
+  {
+   "query": "turn my markdown notes into a website",
+   "repo": "enchant97/note-mark",
+   "gemini": 1,
+   "haiku": 3
+  },
+  {
+   "query": "infrastructure as code",
+   "repo": "pulumi/pulumi",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "huggingface transformers",
+   "repo": "huggingface/notebooks",
+   "gemini": 2,
+   "haiku": 1
+  },
+  {
+   "query": "container vulnerability scanner",
+   "repo": "owasp-dep-scan/dep-scan",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "search text in files really fast",
+   "repo": "cboxdoerfer/fsearch",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "upscale low resolution images",
+   "repo": "thekevinscott/UpscalerJS",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "terminal multiplexer",
+   "repo": "Gaurav-Gosain/tuios",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "kubernetes package manager",
+   "repo": "zarf-dev/zarf",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "qdrant",
+   "repo": "qdrant/qdrant",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "save articles to read later",
+   "repo": "wallabag/android-app",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "comments widget for my blog",
+   "repo": "twikoojs/twikoo",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted team chat",
+   "repo": "taoshihan1991/goflylivechat",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "speech to text",
+   "repo": "mozilla/TTS",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "manage multiple versions of node",
+   "repo": "tj/n",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "meilisearch",
+   "repo": "meilisearch/meilisearch-php",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "run llm inference locally",
+   "repo": "vllm-project/vllm",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted search engine",
+   "repo": "benbusby/whoogle-search",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "separate vocals from a song",
+   "repo": "Eddycrack864/UVR5-UI",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "lazygit",
+   "repo": "kdheepak/lazygit.nvim",
+   "gemini": 3,
+   "haiku": 1
+  },
+  {
+   "query": "request movies and shows for my media server",
+   "repo": "streamaserver/streama",
+   "gemini": 1,
+   "haiku": 3
+  },
+  {
+   "query": "dataframe library",
+   "repo": "DataHaskell/dataframe",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "send newsletters to subscribers",
+   "repo": "forwardemail/forwardemail.net",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "recipe manager",
+   "repo": "karlomikus/bar-assistant",
+   "gemini": 3,
+   "haiku": 2
+  },
+  {
+   "query": "status page for outages",
+   "repo": "lyc8503/UptimeFlare",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "pytorch",
+   "repo": "ssssww0905/-PyTorch-",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "jellyfin",
+   "repo": "jellyfin/jellyfin-mpv-shim",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "pretty print and query json in the terminal",
+   "repo": "tulios/json-viewer",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "terminal multiplexer",
+   "repo": "wezterm/wezterm",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "separate vocals from a song",
+   "repo": "deezer/spleeter",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "in-memory key value store",
+   "repo": "microsoft/FASTER",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "n8n",
+   "repo": "Zie619/n8n-workflows",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted alternative to google photos",
+   "repo": "LibrePhotos/librephotos",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "javascript charting library",
+   "repo": "highcharts/highcharts",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "convert video files between formats",
+   "repo": "Vanilagy/mediabunny",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "local kubernetes cluster for development",
+   "repo": "saschagrunert/kubernix",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "uptime monitoring",
+   "repo": "upptime/uptime-monitor",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "dataframe library",
+   "repo": "rocketlaunchr/dataframe-go",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "compress and optimize images",
+   "repo": "ImageOptim/ImageOptim",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted media server",
+   "repo": "photoview/photoview",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "supabase",
+   "repo": "supabase/supabase-swift",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "mock an api for testing",
+   "repo": "mswjs/msw",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "compress and optimize images",
+   "repo": "kornelski/pngquant",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "kubernets",
+   "repo": "kelseyhightower/kubernetes-the-hard-way",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "lazygit",
+   "repo": "jesseduffield/lazynpm",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "make diagrams from text",
+   "repo": "yuzutech/kroki",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "sync files between my computers without the cloud",
+   "repo": "claudiodangelis/qrcp",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "tmux",
+   "repo": "catppuccin/tmux",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "ocr engine",
+   "repo": "RapidAI/RapidOCR",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "python web framework",
+   "repo": "scrapy/scrapy",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "error tracking",
+   "repo": "getsentry/sentry",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "archive web pages permanently",
+   "repo": "ArchiveBox/archivebox-browser-extension",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "share files securely peer to peer",
+   "repo": "parvardegr/sharing",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted search engine",
+   "repo": "karust/openserp",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "prisma",
+   "repo": "keijiro/Prisma",
+   "gemini": 3,
+   "haiku": 1
+  },
+  {
+   "query": "vite",
+   "repo": "vitejs/vite",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "turn a jupyter notebook into a web app",
+   "repo": "oschuett/appmode",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "pytorch/pytorch",
+   "repo": "torch-points3d/torch-points3d",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "manage multiple versions of node",
+   "repo": "asdf-vm/asdf",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "remove background from an image",
+   "repo": "danielgatis/rembg",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "database gui client",
+   "repo": "beekeeper-studio/beekeeper-studio",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "deep learning framework",
+   "repo": "keras-team/keras",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "fastapi",
+   "repo": "fastapi/fastapi",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "compress and optimize images",
+   "repo": "meowtec/Imagine",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "syncthing",
+   "repo": "pixelspark/sushitrain",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "typescript orm",
+   "repo": "alfateam/orange-orm",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "save articles to read later",
+   "repo": "karakeep-app/karakeep",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "api testing client",
+   "repo": "thunderclient/thunder-client-support",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "chat with my pdf documents",
+   "repo": "aws-samples/serverless-pdf-chat",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "turn a jupyter notebook into a web app",
+   "repo": "voila-dashboards/voila",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "self-hosted web analytics",
+   "repo": "Swetrix/swetrix",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "api gateway",
+   "repo": "Kong/kong",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "neovim",
+   "repo": "rose-pine/neovim",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "zustand",
+   "repo": "d3george/slash-admin",
+   "gemini": 1,
+   "haiku": 2
+  },
+  {
+   "query": "compress and optimize images",
+   "repo": "spatie/image-optimizer",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "immich",
+   "repo": "immich-power-tools/immich-power-tools",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "playwright",
+   "repo": "mswjs/playwright",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "self-hosted search engine",
+   "repo": "Extravi/araa-search",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "go web framework",
+   "repo": "maxence-charriere/go-app",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "vscode",
+   "repo": "monokai-pro/vscode",
+   "gemini": 2,
+   "haiku": 3
+  },
+  {
+   "query": "two factor authentication codes app",
+   "repo": "Bubka/2FAuth",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "text to image generation",
+   "repo": "vietnh1009/ASCII-generator",
+   "gemini": 1,
+   "haiku": 1
+  },
+  {
+   "query": "in-memory key value store",
+   "repo": "HeyPuter/kv.js",
+   "gemini": 3,
+   "haiku": 3
+  },
+  {
+   "query": "kubernetes",
+   "repo": "chenzongshu/Kubernetes",
+   "gemini": 1,
+   "haiku": 1
+  }
+ ]
+}

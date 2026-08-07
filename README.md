@@ -16,8 +16,10 @@ popularity, and recency. Click any result for a short, generated
 step-by-step guide to actually using that repo.
 
 The corpus is ~267,000 repositories crawled, ~244,000 fully indexed with
-embeddings. Warm queries return in ~30 ms; the first request after an idle
-period takes ~15 s because the search service scales to zero when unused.
+embeddings. Warm queries return in ~130 ms server-side. The services
+scale to zero when idle, so a first request after a long quiet spell
+waits about a minute while they wake — a keep-warm ping every 10 minutes
+makes that rare.
 
 ---
 
@@ -25,10 +27,11 @@ period takes ~15 s because the search service scales to zero when unused.
 
 - **Fastest:** open the [live demo](https://feynma1h.github.io/gitsearch/) and
   type what you're looking for in plain English.
-- **From the terminal**, against the deployed search API (`$SEARCH_URL` is the
-  Cloud Run URL, also hard-coded in the frontend):
+- **From the terminal**, against the deployed search API:
 
   ```bash
+  SEARCH_URL=https://gitsearch-search-148185858207.asia-southeast1.run.app
+
   curl -s $SEARCH_URL/search \
     -H 'Content-Type: application/json' \
     -d '{"query": "fast http server in rust", "filters": {"language": "Rust"}}' | jq
@@ -106,7 +109,8 @@ did.
 
 **Usage guides.** Clicking a result asks the search service for a short,
 standard step-by-step guide (what it is → prerequisites → install → run →
-next step), generated once from the repo's README by a small language model and
+next step). A small language model reads the repo's actual files —
+manifests, docs, examples — through a bounded tool loop, and the result is
 cached, so repeat views are instant and free.
 
 ## Run it yourself
@@ -121,8 +125,9 @@ make up
 make migrate
 
 # 3. Populate the corpus (batch jobs, run from the host).
+python3 -m venv .venv && source .venv/bin/activate
 make install
-make crawl          # metadata:  ~25 min for ~280K repos
+make crawl          # metadata:  ~25 min for ~267K repos
 make readmes        # READMEs:    top 20K in ~4 hr (rate-limited)
 make index          # embeddings: ~8 hr for the indexed set
 make build-hnsw     # one-time, after indexing finishes
@@ -143,17 +148,19 @@ pgvector (the Supabase free tier is fine).
 
 ## Where it runs
 
-The live demo runs entirely on free-tier infrastructure:
+Serving runs on free tiers everywhere except the database:
 
 | Component               | Runs on                        | Why                                                  |
 | ----------------------- | ------------------------------ | ---------------------------------------------------- |
 | Postgres + pgvector     | Supabase                       | Managed pgvector with backups                        |
 | Embedding service       | Google Cloud Run               | Scales to zero between requests                      |
-| Search service          | Google Cloud Run               | Same; kept warm to avoid cold-start latency          |
+| Search service          | Google Cloud Run               | Same; a 10-min scheduler ping keeps both warm        |
 | Frontend                | GitHub Pages                   | Static; deploys via GitHub Actions                   |
 | Weekly corpus refresh   | GitHub Actions                 | Incrementally refreshes new and changed repos        |
 
-Running cost is about **$30/month**, most of it the managed database.
+Running cost is about **$30/month**, effectively all of it the managed
+Postgres — Cloud Run, GitHub Pages, and Cloud Scheduler stay inside their
+free tiers.
 
 ## Design decisions
 
@@ -164,6 +171,9 @@ Decision Record** in [`docs/decisions/`](docs/decisions/), including the
 alternatives that were rejected and the conditions under which the decision
 should be revisited. If you're planning to change something substantive, the
 relevant ADR is the place to start.
+
+Work that is designed but deliberately parked — each with the condition
+that would activate it — lives in [`docs/backlog.md`](docs/backlog.md).
 
 ## Tests
 
@@ -205,7 +215,7 @@ variables, internal architecture, and known limitations.
 These are real, deliberate boundaries, not oversights:
 
 - **Curated corpus, not all of GitHub.** The corpus is everything above a star
-  threshold (~280K repos), kept continuously fresh. Indexing every public
+  threshold (~267K repos), kept continuously fresh. Indexing every public
   repository (hundreds of millions) isn't feasible on free-tier infrastructure,
   and GitHub's search API can't even enumerate them — so the project tracks the
   active, popular slice and keeps it current rather than chasing completeness.
@@ -224,6 +234,7 @@ export DATABASE_URL=postgresql://...
 export GITHUB_TOKEN=ghp_...
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, for usage guides
 
+python3 -m venv .venv && source .venv/bin/activate
 make install
 make migrate
 make serve-embed &        # background
@@ -231,6 +242,11 @@ make crawl
 make readmes
 make index
 make build-hnsw
+make build-hnsw-halfvec
 make serve-search &
 make eval                 # sanity check
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

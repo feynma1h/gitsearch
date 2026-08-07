@@ -18,7 +18,7 @@
     "Finding OTHER good repos is not penalised by this metric (that is what",
     "the judged nDCG measures); missing THESE is.",
     "",
-    "Frozen after user veto pass. Append-only afterwards; never relabel to",
+    "Frozen after the hand-review pass. Append-only afterwards; never relabel to",
     "make a run look better."
   ],
   "version": "2026-08-05",

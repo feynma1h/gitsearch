@@ -146,7 +146,7 @@ eval stack this ADR was gated on (`search/eval/`):
 - 200 stratified queries (`queries_v2.json`): 50 navigational
   (including typos and stale-owner forms), 75 category, 75 task.
 - A 50-query **canary suite** (`canary.json`) of category → canonical
-  repos, human-curated (user veto pass 2026-08-05), every entry
+  repos, human-curated (hand-reviewed 2026-08-05), every entry
   verified present in the corpus — a judge-drift-immune true-recall
   denominator.
 - **UMBRELA judge** (`judge.py`): the TREC-adopted prompt, 0–3 graded,

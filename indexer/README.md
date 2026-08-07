@@ -9,8 +9,8 @@ Two processes:
 - **`pipeline/`** — async pipeline that reads repos from Postgres, sends
   them to the service in batches, writes vectors back
 
-See [`../docs/`](../docs/) for architecture and the design decisions behind
-each choice (ADRs 0005–0009).
+See [`../docs/decisions/`](../docs/decisions/) for the rationale behind each
+choice (ADRs 0005–0011).
 
 ## Setup
 
@@ -23,14 +23,13 @@ The indexer reads from that table and writes to a new
 psql "$DATABASE_URL" -f ../sql/0003_repository_embeddings.sql
 
 # 2. Start the embedding service (in its own terminal/container).
-cd service
-pip install -r requirements.txt
+# Run from indexer/, so that "service" resolves as a package.
+pip install -r service/requirements.txt
 uvicorn service.server:app --host 0.0.0.0 --port 8001
 # Wait until you see "Service ready with model BAAI/bge-small-en-v1.5".
 
-# 3. In a separate terminal, run the pipeline.
-cd pipeline
-pip install -r requirements.txt
+# 3. In a separate terminal, run the pipeline (also from indexer/).
+pip install -r pipeline/requirements.txt
 DATABASE_URL=postgresql://... \
 EMBEDDING_SERVICE_URL=http://localhost:8001 \
     python -m pipeline.main --top-n 20000
@@ -46,7 +45,7 @@ CREATE INDEX CONCURRENTLY idx_repository_embeddings_hnsw
 ```
 
 Or use Docker Compose to run everything together — see
-[`docker-compose.yml`](docker-compose.yml) at the repo root.
+[`docker-compose.yml`](../docker-compose.yml) at the repo root.
 
 ## CLI: pipeline
 
