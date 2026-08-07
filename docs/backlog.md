@@ -76,9 +76,10 @@ roughly 8 chunks.
 ## Supabase Micro → Small (trigger-based)
 
 The enrichment working set (198MB terms table + GINs) exceeds
-Micro's cache, so per-vocabulary cold queries page-fault: ~5s cold
-vs 134ms warm (ADR 0020). The keep-warm pinger only keeps its own
-query path hot; diverse real-user vocabulary hits the cold path.
+Micro's cache, so per-vocabulary cold queries page-fault: 1–3s on
+novel vocabulary vs ~120ms once Postgres has it cached (README;
+ADR 0020). The keep-warm pinger only keeps its own query path hot;
+diverse real-user vocabulary hits the cold path.
 Trigger: real-traffic p95 above ~2s over a representative week —
 then upgrade for the larger shared_buffers (roughly $5–15/mo extra;
 verify current Supabase pricing).
