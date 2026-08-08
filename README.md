@@ -106,7 +106,9 @@ statement — full-text over name/topics/description/README, dense vectors
 Fusion. The full-text lane also draws on *curation*: category labels and
 descriptions mined from the awesome-lists that link a repo, which can supply
 the one word its own metadata never says ("framework" for pytorch) but are
-capped so they can never carry a match alone. The final order blends
+capped at completing a match, never building one — otherwise a megastar with
+two stray curated words takes over every category query, which is exactly
+what the first measurement showed. The final order blends
 normalised signals: fused relevance, a *saturating* star count (popularity
 boosts, but can never drown relevance), and recency with a floor (finished
 classics don't sink). A fourth signal — how many published packages depend on
@@ -138,8 +140,7 @@ make install
 make crawl          # metadata:  ~25 min for ~267K repos
 make readmes        # READMEs:    top 20K in ~4 hr (rate-limited)
 make index          # embeddings: the 20K above, ~20 min
-make build-hnsw     # one-time, after indexing finishes
-make build-hnsw-halfvec  # the half-precision index the search service queries
+make build-hnsw-halfvec  # vector index; one-time, after indexing finishes
 
 # 4. Search.
 curl -s localhost:8002/search \
@@ -158,8 +159,9 @@ the deployed service ranks with, and need no credentials beyond the GitHub
 token you already have:
 
 ```bash
-make mine-awesome   # category labels from the awesome-lists that link each repo
-make signals        # dependent counts and scorecards from deps.dev
+make mine-awesome      # category labels from the awesome-lists that link each repo
+make enrichment-terms  # fold the mined text into the table the FTS lane probes
+make signals           # dependent counts and scorecards from deps.dev
 ```
 
 See [`make help`](Makefile) for all tasks, and
@@ -179,12 +181,22 @@ Serving runs on free tiers everywhere except the database:
 | Embedding service       | Google Cloud Run               | Scales to zero between requests                      |
 | Search service          | Google Cloud Run               | Same; a 10-min scheduler ping keeps both warm        |
 | Frontend                | GitHub Pages                   | Static; deploys via GitHub Actions                   |
-| Corpus refresh          | GitHub Actions                 | Weekly incremental pass; monthly full re-baseline    |
+| Corpus refresh          | GitHub Actions                 | Weekly incremental pass; monthly full re-baseline — **schedules currently off**, see below |
 
 The refresh is a chain of three workflows — metadata, then READMEs, then
 embeddings — each chunked to fit inside a job's time limit and re-triggering
 itself until its stage is drained
 ([ADR 0014](docs/decisions/0014-chunked-actions-refresh.md)).
+
+The three workflows ran on their crons through July 2026 and are now
+**disabled in the repository's Actions settings**: the corpus is a
+snapshot as of its last run, not a continuously updated index. Nothing
+about the code changed — the crons are still declared, and re-enabling
+the workflows (or dispatching `Refresh Metadata` manually) restarts the
+chain. Turning them back on needs the `DATABASE_URL`, `CRAWLER_GH_TOKEN`,
+`EMBEDDING_SERVICE_URL`, and `WORKFLOW_DISPATCH_PAT` secrets, and a
+one-time `python scripts/check_regression.py --rebaseline` if the
+embedding-count watermark predates label-scoped counting.
 
 Running cost is about **$30/month**, effectively all of it the managed
 Postgres — Cloud Run, GitHub Pages, and Cloud Scheduler stay inside their
@@ -212,9 +224,12 @@ make test
 
 The unit tests focus on the parts where bugs are subtle and silent: the
 crawler's shard-boundary math, rate limiter, and awesome-list parser, the
-indexer's document construction and worker deadlines, and the search
-service's scoring. The [eval harness](search/eval/) covers end-to-end
-search quality.
+indexer's document construction and worker deadlines, and — on the search
+side — the scoring math, the retrieval statement's input preparation, the
+usage-guide tool loop, and the eval metrics themselves (cross-checked
+against trec_eval). Anything that needs a live Postgres or a real HTTP
+call is deliberately out of scope here; the [eval harness](search/eval/)
+covers end-to-end search quality instead.
 
 ## Project layout
 
@@ -245,11 +260,14 @@ variables, internal architecture, and known limitations.
 These are real, deliberate boundaries, not oversights:
 
 - **Curated corpus, not all of GitHub.** The floor is 200 stars — about 280K
-  repositories on GitHub today, ~267K of them crawled — kept continuously
-  fresh. Indexing every public repository (hundreds of millions) isn't
-  feasible on free-tier infrastructure, and GitHub's search API can't even
-  enumerate them — so the project tracks the active, popular slice and keeps
-  it current rather than chasing completeness.
+  repositories on GitHub today, ~267K of them crawled. Indexing every public
+  repository (hundreds of millions) isn't feasible on free-tier
+  infrastructure, and GitHub's search API can't even enumerate them — so the
+  project tracks the active, popular slice rather than chasing completeness.
+- **The deployed corpus is a snapshot.** The refresh pipeline is built,
+  tested, and was running weekly; its schedules are currently switched off
+  (see [Where it runs](#where-it-runs)), so the live demo searches a corpus
+  frozen at its last run rather than a continuously updated one.
 - **Single instance.** One crawler token, one embedding process, one search
   replica. Horizontal scaling is straightforward but unnecessary at this size.
 - **Coverage-based lexical scoring, not BM25.** Postgres full-text search has
@@ -272,7 +290,6 @@ make serve-embed &        # background
 make crawl
 make readmes              # re-run until nothing pending
 make index                # re-run until nothing pending
-make build-hnsw
 make build-hnsw-halfvec
 make serve-search &
 make eval                 # sanity check

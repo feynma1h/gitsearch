@@ -86,6 +86,10 @@ NAME_LANE_LIMIT: int = 50     # pg_trgm exact/prefix/fuzzy on repo name
 # terms in the light fields, or a full websearch match incl. README).
 # Coverage is computed against this many pre-bound single-lexeme
 # slots; longer queries count only their first 8 content lexemes.
+# NOT freely tunable: the slots occupy parameters $23-$30 of the search
+# statement, whose remaining slots ($31-$34) are literals in db.py, and
+# the lexeme CTE caps at 8 in SQL. Changing this means renumbering both
+# — tests/test_db_helpers.py fails loudly if you forget.
 FTS_COVERAGE_SLOTS: int = 8
 # The fuzzy trigram arm of the name lane only fires for queries of at
 # most this many words: typos people type are short ("pytorhc"), and
@@ -182,9 +186,10 @@ DEFAULT_EMBEDDING_SERVICE_URL: str = "http://localhost:8001"
 # scale-to-zero in production and its cold start measures ~38s end to
 # end (container spin-up, ~27s of imports, ~8s model load — observed
 # 2026-08-05; the earlier 10-15s estimate undershot and made every
-# first-search-after-idle fail at the timeout). 75s matches the
-# frontend's own request budget; warm requests still complete in
-# ~25-40ms, so a generous ceiling costs nothing on the happy path.
+# first-search-after-idle fail at the timeout). 75s sits inside the 90s
+# platform request cap with room for the retrieval SQL that follows;
+# warm requests still complete in ~25-40ms, so a generous ceiling costs
+# nothing on the happy path.
 # NOTE: Cloud Run's service-level request timeout must exceed this —
 # a 30s platform cap was silently 504-ing every cold search at 30.0s
 # no matter what this value said (raised to 90s on 2026-08-05; future
@@ -221,8 +226,10 @@ GUIDE_MODEL: str = "claude-haiku-4-5"
 # Short output: five terse sections. Keeps latency and cost down.
 GUIDE_MAX_TOKENS: int = 800
 
-# READMEs can be huge; the useful install/run material is almost always near
-# the top. Truncate to bound input tokens.
+# Bound on the README text sent to the model. A backstop rather than an
+# active knob today: the crawler already stores at most 8,192 characters
+# per README (crawler/src/readme_client.py), so this only binds if that
+# cap is ever raised.
 GUIDE_README_CHAR_LIMIT: int = 12_000
 
 # Each cache miss costs an LLM call, so throttle harder than /search.

@@ -26,8 +26,9 @@ structurally invisible, because the crawler only ever asks for
 
 Plan — use the exact signal where one exists, a cheap sweep where none does:
 
-1. **Weekly reconcile sweep** (`scripts/reconcile.py`, promoted out of
-   `shard_audit.ipynb`, which already implements most of it). Enumerate
+1. **Weekly reconcile sweep** (`scripts/reconcile.py` — new; the
+   enumeration and diff were prototyped in a local audit notebook that
+   is not part of the repo). Enumerate
    every `stars:>=200` repo id from GitHub, bucketed by `created_at`
    (immutable, so it dodges the 1000-result search cap), and diff against
    the DB. Ids GitHub has that the DB lacks → crossed above the floor,
@@ -67,11 +68,11 @@ of REST budget for the few thousand that actually changed; re-embed
 minutes. `make crawl-incremental` stays at a few minutes, `make crawl`
 ~25 min.
 
-Worth correcting while in here: ADR 0014 states the README pass is ~16
-hours at full scale. It is closer to ~49 — `config.py` records 20K repos
-in ~4 hours on a single token, and the ceiling is 5,000 REST requests per
-hour. Anything scheduled off the 16-hour figure under-provisions CI by
-roughly 8 chunks.
+Sizing note for whoever picks this up: a *full* README pass is ~49 hours
+(244K non-archived repos at the 5,000 REST requests/hour ceiling), which
+is why ADR 0014 carries a correction note against its original ~16-hour
+figure. The conditional refresh above is what removes the need to ever
+run one again.
 
 ## Supabase Micro → Small (trigger-based)
 

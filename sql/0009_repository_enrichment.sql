@@ -110,8 +110,14 @@ CREATE INDEX IF NOT EXISTS idx_repository_enrichment_tsv
 -- Fold a repo's enrichment rows (at most one per source) into one
 -- tsvector at query time. tsvector_concat is core Postgres (it backs
 -- the || operator; positions shift, weights survive); the aggregate
--- wrapper is what lets the FTS lane GROUP BY repo_id. No IF NOT EXISTS
--- for aggregates, hence the guard.
+-- wrapper lets a query GROUP BY repo_id. No IF NOT EXISTS for
+-- aggregates, hence the guard.
+--
+-- NOT on the serving path any more: the FTS lane reads the pre-folded
+-- `repository_enrichment_terms` (migration 0011) instead, because
+-- aggregating TOASTed tsvectors per query stopped being cheap at
+-- full-corpus scale (ADR 0020, "Scale incident"). Kept for ad-hoc
+-- inspection of what a repo's enrichment actually indexes.
 DO $do$
 BEGIN
     CREATE AGGREGATE tsvector_agg (tsvector) (
@@ -142,7 +148,9 @@ CREATE INDEX IF NOT EXISTS idx_repositories_full_name_norm
 --   1. Point serving back at phase-1 behaviour first — set
 --      PHASE2_RETRIEVAL=off on the search service (config change, no
 --      code deploy; see search/service/config.py).
---   2. Then:
+--   2. Then (the terms table from 0011 is derived from this one, so it
+--      goes first):
+--        DROP TABLE IF EXISTS repository_enrichment_terms;
 --        DROP TABLE IF EXISTS repository_enrichment;
 --        DROP AGGREGATE IF EXISTS tsvector_agg(tsvector);
 --        DROP FUNCTION IF EXISTS repo_enrichment_tsv(text, text[], text[], text[]);

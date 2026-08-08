@@ -71,7 +71,10 @@ frontend's deployed origin.
   (no HTML injection), and drops non-http(s) link targets.
 - **"Why this rank?"** — per-result score breakdown: stacked bar of
   the three weight-multiplied components (they sum to the hybrid
-  score) plus a plain-language explainer.
+  score) plus a plain-language explainer. The API also returns a
+  fourth, `criticality_contribution`, which the bar ignores because
+  its weight ships at 0. If that weight is ever promoted, this needs a
+  fourth segment or the bar stops adding up (ADR 0020).
 - Light and dark themes. Follows the system until the user toggles;
   the explicit choice persists in `localStorage`. Both palettes are
   designed, not inverted.

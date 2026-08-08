@@ -13,11 +13,11 @@
 #
 #   cp .env.example .env       # then fill in GITHUB_TOKEN
 #   docker compose up -d postgres
-#   make migrate               # applies sql/0001..0011
+#   make migrate-compose       # applies sql/0001..0011 inside the container
 #   docker compose up -d embedding-service search-service
 #   make crawl                 # populate repositories
 #   make index                 # populate repository_embeddings
-#   make build-hnsw            # build the HNSW index after bulk insert
+#   make build-hnsw-halfvec    # build the vector index after bulk insert
 #   curl localhost:8002/search -d '{"query": "fast http server"}'  # done
 #
 # See README.md for the long version.
@@ -73,6 +73,9 @@ services:
       EMBEDDING_SERVICE_URL: http://embedding-service:8001
       # Optional — enables the /guide usage-guide endpoint. Unset = disabled.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Optional — lets /guide explore the live repo instead of working
+      # from the stored README alone (ADR 0017). Unset = README-only.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     ports:
       - "${SEARCH_PORT:-8002}:8002"
     depends_on:

@@ -9,9 +9,10 @@ arms added by ADR 0020 behind config.PHASE2_RETRIEVAL):
   1. Full-text — matches any content lexeme in the README-free light
      fields (``search_tsv_light``: name, topics, language, description)
      or the full websearch query anywhere including the README
-     (``search_tsv``), or — phase 2 — the repo's enrichment rows
-     (``repository_enrichment``: mined/generated aliases, categories,
-     descriptions, synthetic queries). Ordered by (term coverage,
+     (``search_tsv``), or — phase 2 — the repo's enrichment terms
+     (``repository_enrichment_terms``, the folded lexeme union of its
+     mined/generated aliases, categories, descriptions and synthetic
+     queries; sql/0011). Ordered by (term coverage,
      stars): how many distinct query terms the light fields *or the
      enrichment* cover, then popularity within each coverage tier — so
      for "machine learning framework python" pytorch's mined
@@ -104,7 +105,7 @@ class SearchFilters:
 class SearchHit:
     """One result row, in final display order.
 
-    The three ``*_contribution`` fields are the per-component additions
+    The four ``*_contribution`` fields are the per-component additions
     to ``hybrid_score`` (already weight-multiplied and demotion-scaled),
     exposed so the UI can show *why* a result ranked where it did. Their
     sum equals ``hybrid_score``. ``similarity`` stays the raw cosine
@@ -591,8 +592,8 @@ def _build_search_sql(phase2: bool) -> str:
         slots = dict(
             leading_ctes=_phase2_ctes(),
             membership_doc=(
-                ", OR any two terms in a single enrichment row "
-                "(the UNION ALL arm)"
+                ", OR the whole websearch query inside one repo's "
+                "enrichment terms (the UNION ALL arm)"
             ),
             coverage_doc=" or enrichment",
             fts_inner=_FTS_INNER_PHASE2.format(

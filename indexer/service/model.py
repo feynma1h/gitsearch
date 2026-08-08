@@ -14,10 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingModel:
-    """Lazy-loaded sentence-transformer model.
+    """A sentence-transformer model, loaded once at construction.
 
-    Loading the model takes ~5 seconds and ~500MB of RAM. We do it once at
-    startup and serve all subsequent requests against the in-memory model.
+    Construction costs ~500MB of RAM and, on a cold container, ~8s to
+    fetch the weights from Hugging Face on top of the ~27s of torch
+    imports the lazy import below defers to this point (measured in ADR
+    0019). We pay it once at startup and serve all subsequent requests
+    against the in-memory model.
 
     A single :class:`threading.Lock` serialises calls into ``encode_batch``
     because sentence-transformers' encode method is not safe to call from

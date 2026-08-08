@@ -53,9 +53,12 @@ A request goes through three stages:
      stars within each coverage tier. Coverage also counts terms from
      the repo's *enrichment* — category labels and descriptions mined
      from the awesome lists that link it (plus optional LLM-generated
-     text), stored in their own table — capped at completing one term,
-     so curation can supply the word a repo's metadata lacks
-     ("framework" for pytorch) but never carry a match alone.
+     text), stored in their own table — but capped at completing one
+     term, so curation can supply the word a repo's metadata lacks
+     ("framework" for pytorch) without ever building a coverage tier on
+     its own. A repo whose own fields match nothing at all can still
+     enter the lane, but only if its enrichment covers the *whole*
+     query — the synthetic-query case, and a deliberately strict bar.
    - *Dense* — pgvector KNN over a half-precision HNSW index, partial
      per embedding label (enriched documents embed under a versioned
      label beside the originals; config picks which one serves);
@@ -80,7 +83,7 @@ A request goes through three stages:
 
 This assumes the crawler has populated `repositories`, the indexer has
 populated `repository_embeddings`, and the indexes have been built
-(`make migrate`, then `make build-hnsw` and `make build-hnsw-halfvec`).
+(`make migrate`, then `make build-hnsw-halfvec`).
 
 ```bash
 # 1. Python deps
@@ -186,14 +189,29 @@ Layered, same convention as the crawler and indexer:
 | Source              | Purpose                                              |
 | ------------------- | ---------------------------------------------------- |
 | `service/config.py` | Defaults referenced from multiple files (lane depths, RRF, saturation pivot clamp, recency floor, demotions). |
-| Env vars            | `DATABASE_URL`, `EMBEDDING_SERVICE_URL`, `SEARCH_RATE_LIMIT` (raise only for local eval sweeps). |
+| Env vars            | See the table below.                                 |
 | Request body        | `weights`, `filters`, `limit` per call.              |
 
-The model name is in `config.py` and **must match** what the indexer
-wrote and what the embedding service is serving. If they drift, the
-JOIN on `model_name` matches nothing and you get zero results — silent.
-A startup health-probe against the embedding service that asserts model
-parity is a reasonable next addition.
+| Env var                  | Default                    | Purpose                          |
+| ------------------------ | -------------------------- | -------------------------------- |
+| `DATABASE_URL`           | —                          | Required.                        |
+| `EMBEDDING_SERVICE_URL`  | `http://localhost:8001`    | Where to embed the query.        |
+| `ANTHROPIC_API_KEY`      | unset                      | Enables `/guide`; unset disables it. |
+| `GITHUB_TOKEN`           | unset                      | Lets `/guide` explore the live repo (ADR 0017). |
+| `ALLOWED_ORIGINS`        | `*`                        | CORS allow-list; narrow to the frontend's origin in production. |
+| `SEARCH_RATE_LIMIT`      | `30/minute`                | Raise only for local eval sweeps. |
+| `PHASE2_RETRIEVAL`       | `on`                       | `off` serves the exact ADR 0018 statement — the rollback lever if the enrichment/signals tables are dropped. |
+| `EMBEDDINGS_MODEL_LABEL` | `BAAI/bge-small-en-v1.5`   | Which stored embedding generation the dense lane serves (ADR 0020). |
+| `SEARCH_RRF_K`           | `20`                       | Fusion constant; the precision↔canon-recall dial. |
+
+`EMBEDDINGS_MODEL_LABEL` is a **storage label**, and it must match what
+the indexer wrote. If it drifts, the dense lane's `model_name` predicate
+matches nothing and the lane goes silently empty. The label's encoder
+half (everything before `+`) is what gets requested from the embedding
+service, which rejects an encoder it isn't serving — so an
+encoder mismatch fails loudly while a label mismatch fails quietly. A
+startup health-probe asserting label coverage is a reasonable next
+addition.
 
 Usage guides (`/guide`) add two more knobs: `ANTHROPIC_API_KEY` (enables
 the endpoint) and `GITHUB_TOKEN` (enables full-repo exploration), plus the

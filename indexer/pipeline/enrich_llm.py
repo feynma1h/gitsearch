@@ -4,13 +4,20 @@ Usage:
     # 1. Estimate scope + cost (no API calls, no writes):
     python -m pipeline.enrich_llm --top-n 20000
 
-    # 2. Submit the batch (SPENDS MONEY; requires explicit opt-in):
-    ANTHROPIC_API_KEY=... python -m pipeline.enrich_llm --top-n 20000 \\
+    # 2. Submit the batch (SPENDS MONEY; requires explicit opt-in).
+    #    Key follows --provider: GEMINI_API_KEY (default) or
+    #    ANTHROPIC_API_KEY.
+    GEMINI_API_KEY=... python -m pipeline.enrich_llm --top-n 20000 \\
         --submit --i-approve-the-cost
 
     # 3. Collect finished batches, filter, and write enrichment rows
     #    (needs the embedding service up for the Doc2Query-- filter):
     python -m pipeline.enrich_llm --collect
+
+    # 4. Re-fold the terms table the search lane actually probes.
+    #    Nothing does this automatically; until it runs, the new rows
+    #    change no ranking:
+    make enrichment-terms
 
 Generates, per repo: 5-8 synthetic plain-English queries, a one-paragraph
 "what is this for" description, name aliases, and category tags — the
@@ -20,8 +27,10 @@ prompt_version provenance, beside (never merged with) the awesome-mined
 rows.
 
 Design notes:
-  - **Message Batches API** (50% discount) with **structured outputs**
-    (json_schema), so responses parse mechanically.
+  - **Batch APIs** (50% discount on both providers) with **structured
+    outputs** (json_schema), so responses parse mechanically. Gemini
+    goes through file-upload + `batchGenerateContent`, Anthropic through
+    the Message Batches API; `--collect` handles either.
   - **Doc2Query-- filtering**: generated queries are embedded (same
     bge-small the corpus uses, via the local embedding service) and
     kept only if they actually match their source document
@@ -35,8 +44,9 @@ Design notes:
     provider table below and ADR 0020.
   - **Resumable / idempotent**: repos with an ('llm', PROMPT_VERSION,
     model) row are skipped at selection; batch ids are recorded in
-    ``pipeline/.llm_batches.json`` so --collect can run any time within
-    the API's 29-day result window.
+    ``pipeline/.llm_batches.json`` so --collect can run any time while
+    the provider still holds the results (weeks, not hours — but not
+    forever; collect the same week you submit).
 
 The batch submission is deliberately hard to trigger by accident:
 --submit does nothing without --i-approve-the-cost, and prints the
@@ -70,9 +80,11 @@ DEFAULT_TOP_N = 20_000
 
 # One model per provider, pinned (provenance: rows record the model, and
 # regeneration must be able to name what produced them). Gemini is the
-# approved full-corpus path (2026-08-06, ~$25 at batch rates) — with the
-# recorded caveat that it shares the eval judge's family, controlled by
-# a second-family spot-judge pass at eval time (ADR 0020).
+# approved full-corpus path (2026-08-06) — with the recorded caveat that
+# it shares the eval judge's family, which a second-family spot-judge
+# pass tested and cleared at eval time (ADR 0020). The full-corpus run
+# reconciled to $66.45 at the rates below; the ~$25 figure quoted at
+# approval came from the retired 2.5-flash-lite tier and was wrong.
 PROVIDER_MODELS = {
     "anthropic": "claude-haiku-4-5",
     "gemini": "gemini-3.1-flash-lite",

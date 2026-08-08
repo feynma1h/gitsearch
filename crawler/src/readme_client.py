@@ -30,10 +30,12 @@ from .rate_limiter import RateLimiter, parse_rest_rate_limit
 
 logger = logging.getLogger(__name__)
 
-# We store at most this many characters of README. Embedding models cap input
-# around 8K tokens (~32KB chars); the first 8KB of a README dominates
-# semantic relevance for our use case and keeps the DB lean across the
-# full ~267K-row corpus.
+# We store at most this many characters of README. Everything downstream
+# reads less than this anyway — the embedding document takes ~2KB
+# (bge-small's window is 512 tokens) and the full-text lane indexes the
+# first 2,500 chars — so the cap is really about keeping the table lean
+# across the full ~267K-row corpus while leaving the guide generator and
+# any future consumer a usable head of the file.
 README_MAX_CHARS = 8_192
 
 # Maximum bytes we'll download before truncating, even from the raw download

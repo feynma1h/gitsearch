@@ -4,9 +4,10 @@
 **Date:** 2026-05-10
 
 > **Note (updated 2026-08):** the ~16-hour estimate for the README pass below
-> is too low. At the measured 5000 requests/hour ceiling, a full pass over the
-> ~267K-repo corpus is closer to ~55 hours, so anything sized off the 16-hour
-> figure under-provisions by roughly 8 chunks. The chunking decision itself is
+> is too low. The pass skips archived repos, so its real target is the ~244K
+> non-archived rows, and at the measured 5000 requests/hour REST ceiling a
+> full pass is ~49 hours — anything sized off the 16-hour figure
+> under-provisions by roughly 7 chunks. The chunking decision itself is
 > unaffected — it only gets more necessary. See [the backlog](../backlog.md)
 > for the conditional-refresh work that supersedes a full pass.
 

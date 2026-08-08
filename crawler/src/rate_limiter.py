@@ -33,8 +33,9 @@ class RateLimiter:
     # This is the safety margin against the read-fire-update race: many workers
     # can read `remaining` before any of them has issued a request and called
     # update(). If `num_workers * max_cost_per_query` exceeds this margin, the
-    # crawler can briefly overshoot and trigger 403s. With 15 workers and 1 pt
-    # per search query, an overshoot of 15 is the worst case, so 50 is safe.
+    # crawler can briefly overshoot and trigger 403s. The worst case is one
+    # in-flight request per worker at 1 pt per search query, so 50 covers the
+    # 5- and 30-worker defaults with room to spare.
     LOW_WATER_MARK = 50
 
     def __init__(self, name: str = "github", initial_budget: int = 5000) -> None:

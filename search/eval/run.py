@@ -31,7 +31,8 @@ Usage:
 Metrics (see eval/metrics.py for definitions): binary Recall@K / NDCG@K
 in legacy mode; graded nDCG@K, Recall@K (grade>=2), Judged@K, and canary
 recall@K in v2 mode. The service is scale-to-zero in production, so the
-client tolerates one cold start (~45 s) via a generous timeout + retry.
+client tolerates one cold start (~60-65 s, ADR 0019) via a generous
+timeout + retry.
 """
 
 from __future__ import annotations
@@ -64,7 +65,9 @@ DEFAULT_K = 10
 # Store more than we score: the judging pool wants top-20 (see judge.py)
 # even while metrics are @10.
 DEFAULT_FETCH_K = 20
-REQUEST_TIMEOUT = 90.0   # rides out one production cold start (~45 s)
+# Rides out one production cold start (~60-65 s measured, ADR 0019) and
+# matches the server's own 90 s request cap.
+REQUEST_TIMEOUT = 90.0
 REQUEST_ATTEMPTS = 3
 
 

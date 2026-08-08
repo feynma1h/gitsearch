@@ -21,6 +21,11 @@ The pass is a full re-mine each run and upserts wholesale per
 (repo_id, 'awesome-mined'), so it is idempotent. Rows for repos that
 dropped out of every list are only deleted with --prune-stale (off by
 default; destructive ops stay guarded).
+
+Finish with ``make enrichment-terms``: the search lane probes the
+pre-folded ``repository_enrichment_terms`` table (sql/0011), not the
+rows this pass writes, and nothing rebuilds it automatically — until it
+runs, freshly mined enrichment changes no ranking.
 """
 
 from __future__ import annotations
