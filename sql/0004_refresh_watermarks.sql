@@ -7,6 +7,11 @@
 -- materially (>5%). The watermark is updated in place after a healthy
 -- run, so the table never grows beyond one row.
 --
+-- `embeddings` counts rows for ONE model label (the serving label), not
+-- every row in repository_embeddings — that table holds several
+-- generations of vectors side by side (ADR 0006/0020), and only the
+-- served generation says anything about corpus health.
+--
 -- See ADR 0014 (chunked GitHub Actions for corpus refresh) for the
 -- rationale.
 

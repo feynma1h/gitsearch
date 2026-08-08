@@ -54,6 +54,10 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       EMBEDDING_SERVICE_URL: ${{ secrets.EMBEDDING_SERVICE_URL }}
+      # If EMBEDDINGS_MODEL_LABEL is ever overridden, set it here at job
+      # level: the pipeline and the progress probe both read it, and a
+      # probe on a different label than the run either stops the chunk
+      # chain early or never stops it.
     outputs:
       remaining: ${{ steps.probe.outputs.remaining }}
     steps:
