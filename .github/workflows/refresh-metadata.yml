@@ -33,6 +33,12 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run metadata crawl
         working-directory: crawler
+        # --workers 2, not the crawler's default 5: GitHub's secondary
+        # rate limit is stricter on Actions runners' shared egress IPs
+        # than on a developer machine, and 5 workers here spent every
+        # cycle tripping it and waiting out the 60s global pause. See
+        # ADR 0001's concurrency note for the measurement.
+        #
         # Weekly runs are incremental (only repos pushed since the last
         # crawl); the monthly cron and a manual `full=true` dispatch do a
         # full re-baseline, which also refreshes star counts on repos that

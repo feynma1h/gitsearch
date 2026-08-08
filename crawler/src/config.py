@@ -31,6 +31,13 @@ DEFAULT_MIN_STARS: int = 200
 # secondary limit catastrophically: most shards aborted within minutes.
 # Dropping to 5 trades some crawl wall time (~25 min for the full ~267K
 # corpus) for the crawl actually completing where 15 aborts. See ADR 0001.
+#
+# 5 is the value for a developer machine. The scheduled crawl passes
+# --workers 2 because Actions runners' shared egress IPs get a stricter
+# secondary-limit threshold; that stays an override in the workflow
+# rather than the default here, so a local run isn't slowed by CI's
+# constraint. (The per-worker startup stagger in worker.py applies
+# everywhere and is the other half of the fix.)
 DEFAULT_METADATA_WORKERS: int = 5
 
 

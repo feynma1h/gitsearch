@@ -118,6 +118,22 @@ millions of repos at <10 stars, only thousands at >10K.
   insufficient: high concurrency without backoff catastrophically
   fails; backoff without concurrency limits still wastes the first
   several minutes of a crawl recovering.
+- ⚠️ **The safe concurrency is lower in CI than on a laptop, so the
+  scheduled crawl runs `--workers 2`, not the default 5** (added
+  2026-07; the first scheduled runs are what measured it). The
+  secondary limit is per-IP as well as per-pattern, and GitHub applies
+  stricter thresholds to Actions runners' shared Azure egress than to a
+  developer machine. At the 5-worker default the first successful
+  Actions run completed only ~5 shards per 4 minutes: every cycle
+  tripped the limit and burned 60s on the global pause, after which all
+  five workers resumed in lockstep and reproduced the burst that caused
+  it. Two changes settled it — 2 workers in
+  [`refresh-metadata.yml`](../../.github/workflows/refresh-metadata.yml),
+  and a per-worker startup stagger of `worker_id × 30s` in
+  [`worker.py`](../../crawler/src/worker.py) so workers never make first
+  contact together. The stagger applies everywhere; only the worker
+  count differs by environment, and the CI value is deliberately not the
+  library default — a local operator should not inherit CI's handicap.
 
 ## What would change this decision
 
