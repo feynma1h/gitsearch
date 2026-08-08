@@ -193,10 +193,16 @@ The three workflows ran on their crons through July 2026 and are now
 snapshot as of its last run, not a continuously updated index. Nothing
 about the code changed — the crons are still declared, and re-enabling
 the workflows (or dispatching `Refresh Metadata` manually) restarts the
-chain. Turning them back on needs the `DATABASE_URL`, `CRAWLER_GH_TOKEN`,
-`EMBEDDING_SERVICE_URL`, and `WORKFLOW_DISPATCH_PAT` secrets, and a
-one-time `python scripts/check_regression.py --rebaseline` if the
-embedding-count watermark predates label-scoped counting.
+chain.
+
+Two things to do first. Confirm the `DATABASE_URL`, `CRAWLER_GH_TOKEN`,
+`EMBEDDING_SERVICE_URL`, and `WORKFLOW_DISPATCH_PAT` secrets are still
+valid. Then run `python scripts/check_regression.py --rebaseline` once:
+the stored health watermark holds an all-label embedding count from
+before that check was scoped to the serving label, so without it the
+first run's final health check reads the difference as a two-thirds
+collapse and fails the workflow — after the whole chain has already run.
+See [`docs/backlog.md`](docs/backlog.md).
 
 Running cost is about **$30/month**, effectively all of it the managed
 Postgres — Cloud Run, GitHub Pages, and Cloud Scheduler stay inside their

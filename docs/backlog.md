@@ -13,6 +13,29 @@ ground every later retrieval decision in usage instead of the
 synthetic 200-query eval. Every other item below becomes cheaper to
 decide once this exists. No ADR yet — design when picked up.
 
+## Corpus refresh: paused, and what restarting it takes
+
+The three refresh workflows (ADR 0014) ran on their crons through July
+2026 and are now disabled in the repository's Actions settings, so the
+deployed corpus is a snapshot rather than a live index. Everything below
+about freshness assumes they are running again.
+
+Restarting is a settings toggle plus two checks:
+
+1. **`python scripts/check_regression.py --rebaseline`, once, before
+   re-enabling.** The stored watermark holds an all-label embedding
+   count written before that check was scoped to the serving label
+   (~733K vs ~244K). Left alone, the first run's health check reads the
+   difference as a two-thirds collapse, exits non-zero, and fails the
+   workflow — and because the watermark is only advanced on the healthy
+   path, every later run fails the same way until it is rebaselined.
+   Nothing is corrupted either way; the refresh itself has already
+   committed by then.
+2. **Confirm the secrets.** `DATABASE_URL`, `CRAWLER_GH_TOKEN`,
+   `EMBEDDING_SERVICE_URL`, `WORKFLOW_DISPATCH_PAT`. The last one is the
+   footgun ADR 0014 records: its absence is invisible on the first chunk
+   and only surfaces when the second fails to dispatch.
+
 ## Incremental freshness: reconcile sweep + conditional README refresh (designed, not started)
 
 The corpus is currently refreshed by re-running the whole pipeline. An
