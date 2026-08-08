@@ -42,7 +42,18 @@ CREATE INDEX IF NOT EXISTS idx_repository_embeddings_model
 -- HNSW INDEX — DO NOT INCLUDE IN THE INITIAL MIGRATION RUN.
 -- ---------------------------------------------------------------------------
 --
--- After the indexer has populated the table, run this once:
+-- SUPERSEDED (ADR 0018, then 0020). Build `make build-hnsw-halfvec`
+-- instead. The fp32 index below is kept as the record of the original
+-- design; nothing queries it any more, because the dense lane orders by
+-- `(embedding::halfvec(384)) <#> ...` — a different expression and
+-- operator class, which this index cannot answer. It is also label-blind
+-- where the serving index is partial per model_name, so leaving one in
+-- place makes every bulk load under a new label pay per-row graph
+-- insertion. If your database still has it:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw;
+--
+-- The original statement, for the record:
 --
 --   CREATE INDEX CONCURRENTLY idx_repository_embeddings_hnsw
 --       ON repository_embeddings

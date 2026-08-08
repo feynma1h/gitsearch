@@ -25,7 +25,7 @@ endif
 
 .PHONY: help
 help: ## Show this help.
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -115,6 +115,18 @@ mine-awesome: ## Mine awesome-list READMEs into repository_enrichment (full re-m
 signals: ## Ingest deps.dev signals (scorecards corpus-wide, dependents for the top repos).
 	cd crawler && $(PYTHON) -m src.deps_dev_pass --scorecard-all
 
+# The FTS lane probes repository_enrichment_terms, not the enrichment
+# rows themselves (sql/0011 explains why), and that table is built by a
+# batch statement rather than a trigger. So any run that writes
+# enrichment — mine-awesome, enrich_llm --collect — leaves the lane
+# reading stale terms until this re-folds them. Session-mode connection:
+# the fold and the GIN rebuild both outlast the pooler's statement
+# timeout, same reasoning as the HNSW builds.
+.PHONY: enrichment-terms
+enrichment-terms: ## Rebuild repository_enrichment_terms. Run after mine-awesome or an LLM enrichment collect.
+	$(PSQL) "$(MIGRATE_REWRITE_DATABASE_URL)" -v ON_ERROR_STOP=1 \
+		-f sql/0011_repository_enrichment_terms.sql
+
 .PHONY: audit
 audit: ## Read-only report: what's uploaded vs still pending in each stage.
 	cd $(CURDIR) && $(PYTHON) scripts/audit_corpus.py
@@ -122,9 +134,12 @@ audit: ## Read-only report: what's uploaded vs still pending in each stage.
 # --- HNSW build tuning ----------------------------------------------------
 # The graph must fit in maintenance_work_mem or the build falls back to a
 # disk-merge phase that small hosted instances effectively never finish.
-# 768MB holds the full corpus (~244K x 384-dim) and is safe on a 2GB
-# instance; on a 1GB instance pass HNSW_MAINTENANCE_WORK_MEM=512MB and
-# expect a much slower build (or temporarily bump the instance size).
+# 768MB holds one label's worth of the full corpus (~244K x 384-dim as
+# halfvec) and is safe on a 2GB instance; on a 1GB instance pass
+# HNSW_MAINTENANCE_WORK_MEM=512MB and expect a much slower build (or
+# temporarily bump the instance size). Note the per-label partial
+# predicate is what keeps this figure valid — repository_embeddings holds
+# every label's rows, several times that count.
 HNSW_MAINTENANCE_WORK_MEM ?= 768MB
 # Index DDL runs for minutes and relies on session-scoped SETs, so it needs
 # a session-mode connection. On Supabase that's pooler port 5432 — the
@@ -133,21 +148,13 @@ HNSW_MAINTENANCE_WORK_MEM ?= 768MB
 # The subst is a no-op when DATABASE_URL isn't on 6543 (e.g. local compose).
 HNSW_DATABASE_URL ?= $(subst :6543/,:5432/,$(DATABASE_URL))
 
-.PHONY: build-hnsw
-build-hnsw: ## (Re)build the HNSW index after bulk embedding. Search stays up but slow (unindexed) while it runs.
-	# A cancelled/failed CONCURRENTLY build leaves an INVALID index that
-	# IF NOT EXISTS would silently keep, so always drop and build fresh.
-	# Serial build (parallel workers need shared memory hosted instances
-	# don't provide, and the serial in-memory build is already fast).
-	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
-		-c "SET statement_timeout = 0;" \
-		-c "SET maintenance_work_mem = '$(HNSW_MAINTENANCE_WORK_MEM)';" \
-		-c "SET max_parallel_maintenance_workers = 0;" \
-		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw;" \
-		-c "CREATE INDEX CONCURRENTLY idx_repository_embeddings_hnsw \
-	        ON repository_embeddings \
-	        USING hnsw (embedding vector_cosine_ops) \
-	        WITH (m = 16, ef_construction = 64);"
+# There is no fp32 HNSW build target. The dense lane orders by
+# `(embedding::halfvec(384)) <#> ...`, which an
+# `hnsw (embedding vector_cosine_ops)` index cannot serve — different
+# expression, different operator class — so an fp32 index would be built,
+# paid for, and never read. ADR 0018 measured halfvec at recall parity and
+# dropped the fp32 index then; sql/0003 keeps the original DDL as history,
+# with a one-line DROP for anyone whose database still carries it.
 
 # --- Versioned embedding labels (ADR 0020) ---------------------------------
 # Enriched vectors live under their own model_name label beside the
@@ -162,14 +169,19 @@ build-hnsw: ## (Re)build the HNSW index after bulk embedding. Search stays up bu
 # Step order matters: 3 and 4 bulk-insert under the new label, which
 # must happen while NO HNSW index covers those rows (per-row graph
 # insertion turns a minutes-long copy into hours) — the per-label
-# partial indexes are what make that true.
+# partial indexes are what make that true. That invariant is why no
+# label-blind vector index may exist on this table: one covers every
+# label's rows and silently reintroduces the per-row cost. Step 2 is
+# exactly that clean-up for the halfvec index; check for stragglers with
+#   \di+ idx_repository_embeddings_hnsw*
+# before running step 3.
 BASE_LABEL   ?= BAAI/bge-small-en-v1.5
 ENRICH_LABEL ?= BAAI/bge-small-en-v1.5+enrich-v1
 HNSW_LABEL        ?= $(BASE_LABEL)
 HNSW_LABEL_SUFFIX ?= base
 
 .PHONY: build-hnsw-halfvec
-build-hnsw-halfvec: ## Build the per-label partial halfvec HNSW index (ADR 0018/0019). Vars: HNSW_LABEL, HNSW_LABEL_SUFFIX.
+build-hnsw-halfvec: ## Build the per-label partial halfvec HNSW index (ADR 0018/0020). Vars: HNSW_LABEL, HNSW_LABEL_SUFFIX.
 	# Embeddings are L2-normalised (the embedding service passes
 	# normalize_embeddings=True), so inner product ranks identically to
 	# cosine and halfvec_ip_ops is the cheaper operator. The index is on
@@ -217,18 +229,6 @@ copy-embeddings-label: ## Copy unenriched repos' vectors BASE_LABEL -> ENRICH_LA
 .PHONY: index-enriched
 index-enriched: ## Embed enriched repos' enrichment-aware docs under ENRICH_LABEL. Run copy-embeddings-label first.
 	cd indexer && EMBEDDINGS_MODEL_LABEL='$(ENRICH_LABEL)' $(PYTHON) -m pipeline.main --top-n 300000
-
-.PHONY: drop-hnsw-fp32
-drop-hnsw-fp32: ## Drop the fp32 HNSW index once halfvec recall parity is verified live. Guarded: run with CONFIRM=yes.
-	@if [ "$(CONFIRM)" != "yes" ]; then \
-		echo "This drops idx_repository_embeddings_hnsw (the fp32 HNSW index)."; \
-		echo "Only do this after the halfvec-backed service is live and verified."; \
-		echo "Re-run with: make drop-hnsw-fp32 CONFIRM=yes   (rebuild: make build-hnsw)"; \
-		exit 1; \
-	fi
-	$(PSQL) "$(HNSW_DATABASE_URL)" -v ON_ERROR_STOP=1 \
-		-c "SET statement_timeout = 0;" \
-		-c "DROP INDEX CONCURRENTLY IF EXISTS idx_repository_embeddings_hnsw;"
 
 # ---------------------------------------------------------------------------
 # Long-lived services (when running from the host, not docker compose)
