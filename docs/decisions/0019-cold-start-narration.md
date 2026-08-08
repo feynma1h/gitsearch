@@ -8,7 +8,7 @@
 Both Cloud Run services scale to zero when idle, so the first search
 after a quiet spell pays the full wake chain before the user sees a
 result. The frontend narrates that wait against a persistent elapsed
-clock (`COLD_STAGE_AT` in `frontend/index.html`), and the narration was
+clock (`COLD_STAGE_AT` in `frontend/js/app.js`), and the narration was
 tuned to a verified pre-v2 cold search of 45.4s: copy promised "about
 40 seconds", with a "taking longer than we expected" valve at 55s.
 

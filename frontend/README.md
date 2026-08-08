@@ -1,18 +1,32 @@
 # Frontend
 
-A single-file HTML/JS UI for the search service.
+The UI for the search service.
 
-No build step. No framework. One `index.html` that loads in any
-browser and talks to the search service via `fetch()`. The visual
-design is a warm-paper editorial treatment: an ink-and-cream
-palette, Newsreader serif for headings and the wordmark, and
-deliberately designed wait states for the scale-to-zero cold start.
+No build step, no framework, no dependencies — plain HTML, one
+stylesheet, and a handful of ES modules that talk to the search service
+via `fetch()`. The visual design is a warm-paper editorial treatment: an
+ink-and-cream palette, Newsreader serif for headings and the wordmark,
+and deliberately designed wait states for the scale-to-zero cold start.
+
+```
+index.html      markup, and the inline snippet that sets the theme
+                before first paint
+styles.css      the whole design: both palettes, every component
+js/
+  app.js        entry point — the five phases, the search itself, and
+                the wiring from the controls to both
+  config.js     API endpoints, the example queries, language colors
+  results.js    result cards and the "Why this rank?" breakdown
+  guide.js      loading and cancelling a repo's quick-start guide
+  markdown.js   the guide's Markdown -> DOM renderer
+  session.js    what this visit has learned: guide cache, model names
+  theme.js      light/dark toggle
+  dom.js        the two helpers everything else builds on
+```
 
 ## Run locally
 
-The file works straight off the filesystem if you just open it, but
-some browsers (Safari notably) restrict `fetch()` from `file://`
-URLs. The reliable way is to serve it over HTTP:
+Serve it over HTTP:
 
 ```bash
 cd frontend
@@ -20,27 +34,34 @@ python -m http.server 3000
 # open http://localhost:3000
 ```
 
-The page defaults to the deployed search service (the Cloud Run URL
-hard-coded near the top of the `<script>` block). To point it
-elsewhere — e.g. a local search service — set the override before
-the main script runs, with a tiny tag in the HTML:
+Opening `index.html` off the filesystem won't work: browsers refuse to
+load ES modules from `file://`, and a `file://` page couldn't have
+reached the search service anyway — its origin is `null`, which is not
+in the service's allow-list.
+
+The page defaults to the deployed search service (`API_BASE` in
+[`js/config.js`](js/config.js)). To point it elsewhere — e.g. a local
+search service — set the override from a plain `<script>` tag in
+`index.html`:
 
 ```html
 <script>window.GITSEARCH_API_URL = "http://localhost:8002";</script>
 ```
 
-inserted anywhere before the existing `<script>` block. Note the
-deployed service only allows browser requests from the origins in
-its `ALLOWED_ORIGINS` env var, so a local page talking to the
-deployed API will be blocked by CORS — run a local search service,
-or test against your own deployment.
+Anywhere on the page works: module scripts run after the document is
+parsed, so an inline tag has always set it first. Note the deployed
+service only allows browser requests from the origins in its
+`ALLOWED_ORIGINS` env var, so a local page talking to the deployed API
+will be blocked by CORS — run a local search service, or test against
+your own deployment.
 
 ## Deploy
 
-Drop `index.html` on any static host: Vercel, Netlify, Cloudflare
-Pages, GitHub Pages, S3+CloudFront. Free tier on any of them is
-enough. Set `ALLOWED_ORIGINS` on the search service to the
-frontend's deployed origin.
+Copy the `frontend/` directory to any static host: Vercel, Netlify,
+Cloudflare Pages, GitHub Pages, S3+CloudFront. Free tier on any of them
+is enough, and none of them need to build anything — the files ship as
+they are. Set `ALLOWED_ORIGINS` on the search service to the frontend's
+deployed origin.
 
 ## What the UI does
 
@@ -102,13 +123,18 @@ re-verifying them against the deployed API.
 - **The status line reports client-measured elapsed time.** Server
   `took_ms` is ~120 ms on a warm cache, which renders as "0.1s" and
   says nothing about the wait the reader actually sat through.
+- **The theme is set inline, before first paint.** Everything else
+  is a deferred module, but reading `localStorage` and stamping
+  `body[data-th]` has to happen before the first frame or the page
+  flashes the wrong palette.
 
 ## What it deliberately doesn't do
 
 - No pagination beyond 20 results. Top results are what semantic
   search is good at.
 - No accounts, no saved searches, no history. Out of scope.
-- No build step or `node_modules`. If this UI's needs ever grow
-  beyond what one HTML file can hold, port it to Next.js / Astro /
+- No build step, no bundler, no `node_modules`. The modules are
+  loaded natively by the browser. If this UI's needs ever outgrow
+  what plain static files can hold, port it to Next.js / Astro /
   whatever — the API contract is just `POST /search` and
   `GET /guide/{repo_id}`, so the port is mechanical.

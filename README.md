@@ -56,7 +56,8 @@ one Postgres + pgvector database:
 - **[`search/`](search/)** — the API that embeds your query, retrieves
   candidates through fused full-text + vector + name lanes, ranks them, and
   generates the per-repo "how do I use this?" guides.
-- **[`frontend/`](frontend/)** — a single static HTML page, no build step.
+- **[`frontend/`](frontend/)** — static HTML, CSS, and ES modules; no build
+  step and no dependencies.
 
 The parts are deliberately independent: they share the database and talk over
 HTTP, but share no Python code, so each can be built, tested, and deployed on
